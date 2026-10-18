@@ -1,106 +1,92 @@
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import type { PaymentRequest } from '@offline-pay/shared';
-
-import { services } from '@/services';
-import { AmountKeypad, Banner, Button, Card, NetworkBanner, Screen, ScreenHeader, formatInr, useAppTheme } from '@/ui';
-
-function isFinder(row: number, column: number): boolean {
-  return (
-    (row < 5 && column < 5) ||
-    (row < 5 && column > 9) ||
-    (row > 9 && column < 5)
-  );
-}
-
-function QrPlaceholder() {
-  const theme = useAppTheme();
-  return (
-    <View accessibilityLabel="Sample payment QR code" style={[styles.qrFrame, { backgroundColor: '#FFFFFF', borderColor: theme.border }]}>
-      {Array.from({ length: 15 }, (_, row) => (
-        <View key={row} style={styles.qrRow}>
-          {Array.from({ length: 15 }, (_, column) => {
-            const pattern = isFinder(row, column)
-              ? row === 0 || column === 0 || row === 4 || column === 4 || (row >= 2 && row <= 2 && column >= 2 && column <= 2)
-              : (row * 13 + column * 7 + row * column) % 5 < 2;
-            return <View key={column} style={[styles.qrCell, { backgroundColor: pattern ? '#19231D' : '#FFFFFF' }]} />;
-          })}
-        </View>
-      ))}
-    </View>
-  );
-}
+import { useCallback, useEffect, useState } from 'react';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { encodePayload, type PaymentRequest, type VerifyResult } from '@offline-pay/shared';
+import { offlineFlows, formatOfflineInr } from '../offline';
+import { Message, OfflinePage, OfflineScanner, QrDisplay } from '../offline/ui';
+import { Banner, Button, useAppTheme } from '../ui';
 
 export default function ReceiveScreen() {
   const theme = useAppTheme();
-  const [value, setValue] = useState('');
+  const [amount, setAmount] = useState('');
   const [request, setRequest] = useState<PaymentRequest | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [expired, setExpired] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<Extract<VerifyResult, { ok: true }> | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const amountPaise = Number(value || '0') * 100;
-
-  const createQr = async () => {
-    setLoading(true);
-    setError('');
+  useFocusEffect(useCallback(() => {
+    let current = true;
+    void offlineFlows.getOpenRequest().then((open) => { if (current) setRequest(open); })
+      .catch((caught: unknown) => { if (current) setError(caught instanceof Error ? caught.message : 'Cannot restore request.'); });
+    return () => { current = false; };
+  }, []));
+  useEffect(() => {
+    if (!request || result) return;
+    const timer = setInterval(() => {
+      void offlineFlows.getOpenRequest().then((open) => { if (!open) { setExpired(true); setScanning(false); } })
+        .catch(() => { setExpired(true); setScanning(false); });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [request, result]);
+  const create = async () => {
+    setBusy(true); setError('');
     try {
-      const next = await services.offline.createRequest(amountPaise);
-      setRequest(next);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not make your QR code. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+      if (!/^\d{1,7}(?:\.\d{1,2})?$/.test(amount)) throw new Error('Enter an INR amount with up to two decimal places.');
+      const [rupees, fraction = ''] = amount.split('.');
+      const value = BigInt(rupees) * 100n + BigInt(fraction.padEnd(2, '0'));
+      if (value > 0xffff_ffffn || value <= 0n) throw new Error('Enter a positive amount within the offline limit.');
+      setRequest(await offlineFlows.createRequest(Number(value)));
+      setExpired(false); setProgress(0); setScanning(false); setResult(null);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Cannot create request.'); }
+    finally { setBusy(false); }
   };
-
-  return (
-    <Screen>
-      <ScreenHeader title="Receive money" subtitle="Set an amount and show your QR code." />
-      <NetworkBanner />
-
-      {!request ? (
-        <>
-          <Card style={styles.amountCard}>
-            <Text style={[styles.amountLabel, { color: theme.textSecondary }]}>REQUEST AMOUNT</Text>
-            <Text style={[styles.amount, { color: theme.text }]}>{formatInr(amountPaise)}</Text>
-            <Text style={[styles.helper, { color: theme.textSecondary }]}>Enter a whole rupee amount.</Text>
-          </Card>
-          <AmountKeypad value={value} onChange={setValue} maxDigits={5} />
-          {error ? <Banner title={error} tone="warning" icon="!" /> : null}
-          <Button title="Create my QR" fullWidth disabled={amountPaise <= 0} loading={loading} onPress={createQr} />
-        </>
-      ) : (
-        <>
-          <Card style={styles.qrCard}>
-            <View style={[styles.qrOwner, { backgroundColor: theme.accentSoft }]}>
-              <Text style={[styles.qrOwnerText, { color: theme.accent }]}>A</Text>
-            </View>
-            <Text style={[styles.qrName, { color: theme.text }]}>Ananya Sharma</Text>
-            <Text style={[styles.amount, { color: theme.text }]}>{formatInr(request.inrPaise)}</Text>
-            <QrPlaceholder />
-            <Text style={[styles.helper, { color: theme.textSecondary }]}>Let the other person scan to pay.</Text>
-            <View style={[styles.demoLabel, { backgroundColor: theme.surfaceMuted }]}>
-              <Text style={[styles.demoLabelText, { color: theme.textSecondary }]}>DEMO QR · SAMPLE ONLY</Text>
-            </View>
-          </Card>
-          <Button title="Create another QR" variant="secondary" fullWidth onPress={() => setRequest(null)} />
-        </>
-      )}
-    </Screen>
-  );
+  const scan = async (data: string) => {
+    const verified = await offlineFlows.receiveFrame(data);
+    if ('progress' in verified) { setProgress(verified.progress); setError(''); }
+    else if (verified.ok) { setResult(verified); setScanning(false); setError(''); }
+    else { setError(verified.reason); setProgress(0); }
+  };
+  if (result) return <OfflinePage title="Payment received">
+    <View style={styles.success}>
+      <Text style={styles.tick}>✓</Text>
+      <Text style={styles.received}>Payment received</Text>
+      <Text style={styles.received}>{formatOfflineInr(result.totalInrPaise)}</Text>
+      <Text style={styles.successText}>Verified offline, settles when you&apos;re online</Text>
+      <Text style={styles.successText}>Risk: {result.risk}</Text>
+      <Text style={styles.successText}>Based on cached revocations and local unsettled exposure.</Text>
+    </View>
+    <Button title="Done" onPress={() => router.replace('/(tabs)')} />
+  </OfflinePage>;
+  return <OfflinePage title="Receive money">
+    {!request ? <>
+      <Message>Enter the amount in INR</Message>
+      <TextInput accessibilityLabel="Amount in INR" value={amount} onChangeText={setAmount} keyboardType="decimal-pad"
+        maxLength={10} placeholder="0.00" placeholderTextColor={theme.textSecondary}
+        style={[styles.input, { color: theme.text, borderColor: theme.border }]} />
+      <Button title="Create my QR" loading={busy} onPress={() => void create()} />
+    </> : <>
+      <Message>{formatOfflineInr(request.inrPaise)} · {request.payee.slice(0, 8)}…{request.payee.slice(-6)}</Message>
+      {expired ? <Message>Request expired after five minutes. Create a new request.</Message> : scanning ? <>
+        <OfflineScanner onScan={scan} />
+        <Message>Proof frames: {Math.round(progress * 100)}% · Scan in any order</Message>
+        <Button title="Restart proof scan" variant="secondary" onPress={() => { offlineFlows.resetFrames(); setProgress(0); setError(''); }} />
+        <Button title="Show request QR" variant="ghost" onPress={() => setScanning(false)} />
+      </> : <>
+        <QrDisplay frames={[encodePayload(request)]} />
+        <Message>Valid for five minutes. Then scan the payer’s proof.</Message>
+        <Button title="Scan payment proof" onPress={() => { offlineFlows.resetFrames(); setProgress(0); setScanning(true); }} />
+      </>}
+      <Button title="New amount" variant="secondary" onPress={() => { setRequest(null); setScanning(false); setError(''); }} />
+    </>}
+    {error ? <Banner title={error} tone="warning" /> : null}
+    <Button title="Back" variant="ghost" onPress={() => router.back()} />
+  </OfflinePage>;
 }
-
 const styles = StyleSheet.create({
-  amountCard: { alignItems: 'center', paddingVertical: 24, gap: 7 },
-  amountLabel: { fontSize: 10, lineHeight: 14, letterSpacing: 1.1, fontWeight: '800' },
-  amount: { fontSize: 36, lineHeight: 44, fontWeight: '700', letterSpacing: -0.7 },
-  helper: { fontSize: 12, lineHeight: 18, textAlign: 'center' },
-  qrCard: { alignItems: 'center', gap: 11, paddingVertical: 20 },
-  qrOwner: { width: 38, height: 38, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  qrOwnerText: { fontSize: 17, fontWeight: '800' },
-  qrName: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
-  qrFrame: { padding: 10, borderWidth: 1, borderRadius: 12, marginVertical: 5 },
-  qrRow: { flexDirection: 'row' },
-  qrCell: { width: 9, height: 9 },
-  demoLabel: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 6 },
-  demoLabelText: { fontSize: 9, lineHeight: 13, fontWeight: '800', letterSpacing: 0.8 },
+  input: { fontSize: 36, borderWidth: 1, borderRadius: 16, padding: 16 },
+  success: { flex: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 24, padding: 24, gap: 20, backgroundColor: '#06743D' },
+  tick: { color: '#FFFFFF', fontSize: 80 }, received: { color: '#FFFFFF', fontSize: 32, fontWeight: '800', textAlign: 'center' },
+  successText: { color: '#FFFFFF', fontSize: 18, textAlign: 'center' },
 });
