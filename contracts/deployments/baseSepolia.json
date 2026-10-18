@@ -1,0 +1,12 @@
+{
+  "network": "baseSepolia",
+  "chainId": 84532,
+  "block": 48281257,
+  "addresses": {
+    "deployer": "0x5D1b52d02aEfbC6474C32bfEd0349399E7156970",
+    "issuer": "0x098E30b68B15CF8D438F8be22b0caD14c64c1B58",
+    "relayer": "0xBaB95Abf8b66b32106b86947f70C53b356152EfA",
+    "MockUSDC": "0x0af960dad8ff244b8447f0ed181fd2fe276c7520",
+    "OfflineVault": "0x6e69218ac07732c4379fb1c3adc6fc49922c32f0"
+  }
+}
