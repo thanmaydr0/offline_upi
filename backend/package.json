@@ -3,7 +3,34 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "tsx watch src/server.ts", "start": "tsx src/server.ts", "test": "vitest run", "typecheck": "tsc --noEmit" },
-  "dependencies": { "@offline-pay/shared": "0.1.0", "dotenv": "^16.6.0", "express": "^5.1.0", "zod": "^4.1.0" },
-  "devDependencies": { "@types/express": "^5.0.3", "@types/node": "^24.0.0", "@types/supertest": "^6.0.3", "supertest": "^7.1.4", "tsx": "^4.20.0", "typescript": "^5.9.0", "vitest": "^5.0.5" }
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "keys:generate": "tsx src/keys-generate.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@offline-pay/shared": "0.1.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^16.6.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "pino": "^10.4.0",
+    "viem": "^2.57.7",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.0.0",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.5"
+  }
 }

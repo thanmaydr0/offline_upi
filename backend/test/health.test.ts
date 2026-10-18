@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 import request from "supertest";
-import { app } from "../src/app.js";
+import { createTestApp } from "./helpers.js";
 
 describe("GET /health", () => {
   it("returns a healthy status", async () => {
-    await request(app).get("/health").expect(200, { status: "ok" });
+    const testContext = createTestApp();
+    await request(testContext.app).get("/health").expect(200, { status: "ok" });
+    testContext.db.close();
   });
 });

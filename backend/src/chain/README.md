@@ -1,0 +1,1 @@
+`real/` is intentionally left empty for P5's ChainClient implementation. P2 supplies the ChainClient interface and in-memory FakeChain here. `CHAIN_MODE=chain` fails with `NotConfigured` until P5 completes the real adapter.
