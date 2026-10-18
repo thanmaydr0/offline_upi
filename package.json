@@ -1,0 +1,18 @@
+{
+  "name": "offline-pay",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "contracts",
+    "backend"
+  ],
+  "scripts": {
+    "test": "npm run test -w shared && npm run test -w contracts && npm run test -w backend && npm run test --prefix mobile",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w contracts && npm run typecheck -w backend && npm run typecheck --prefix mobile"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "cbor-extract@2.2.2": true
+  }
+}
