@@ -52,8 +52,8 @@ export default function ReceiveScreen() {
     <View style={styles.success}>
       <Text style={styles.tick}>✓</Text>
       <Text style={styles.received}>Payment received</Text>
-      <Text style={styles.received}>{formatOfflineInr(result.totalInrPaise)}</Text>
-      <Text style={styles.successText}>Verified offline, settles when you&apos;re online</Text>
+      <Text style={styles.received}>+{formatOfflineInr(result.totalInrPaise)}</Text>
+      <Text style={styles.successText}>Saved on this phone while offline. It will settle when the backend is available again.</Text>
       <Text style={styles.successText}>Risk: {result.risk}</Text>
       <Text style={styles.successText}>Based on cached revocations and local unsettled exposure.</Text>
     </View>
@@ -61,7 +61,7 @@ export default function ReceiveScreen() {
   </OfflinePage>;
   return <OfflinePage title="Receive money">
     {!request ? <>
-      <Message>Enter the amount in INR</Message>
+      <Message>Enter the amount in INR. After first-time setup, this transfer works without a backend or internet connection.</Message>
       <TextInput accessibilityLabel="Amount in INR" value={amount} onChangeText={setAmount} keyboardType="decimal-pad"
         maxLength={10} placeholder="0.00" placeholderTextColor={theme.textSecondary}
         style={[styles.input, { color: theme.text, borderColor: theme.border }]} />

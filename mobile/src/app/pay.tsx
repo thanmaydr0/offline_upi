@@ -10,6 +10,7 @@ export default function PayScreen() {
   const theme = useAppTheme();
   const [preview, setPreview] = useState<{ request: PaymentRequest; balanceAfterPaise: bigint } | null>(null);
   const [frames, setFrames] = useState<string[] | null>(null);
+  const [remainingBalancePaise, setRemainingBalancePaise] = useState<bigint | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const paying = useRef(false);
@@ -20,7 +21,7 @@ export default function PayScreen() {
       const request = await offlineFlows.parseRequestQr(data);
       const next = await offlineFlows.previewRequest(request);
       seenScans.current.add(data);
-      setError(''); setPreview(next);
+      setError(''); setRemainingBalancePaise(null); setPreview(next);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Invalid request QR.'); }
   };
   const pay = async () => {
@@ -28,6 +29,7 @@ export default function PayScreen() {
     paying.current = true; setBusy(true); setError('');
     try {
       const proof = await offlineFlows.payRequest(preview.request);
+      setRemainingBalancePaise(preview.balanceAfterPaise);
       setFrames(proof); setPreview(null);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Payment failed.'); }
     finally { paying.current = false; setBusy(false); }
@@ -35,11 +37,12 @@ export default function PayScreen() {
   return <OfflinePage title={frames ? 'Show payment proof' : 'Pay nearby'}>
     {frames ? <>
       <Message>Vouchers spent. Show every frame to the receiver.</Message>
+      {remainingBalancePaise !== null && <Message>Updated offline balance on this phone: {formatOfflineInr(remainingBalancePaise)}</Message>}
       <QrDisplay frames={frames} />
       <Message>Wait for their “Payment received” screen. Closing this proof cannot undo the payment or generate it again.</Message>
       <Button title="Done — close proof" onPress={() => { setFrames(null); router.replace('/(tabs)'); }} />
     </> : <>
-      <Message>Scan the receiver’s OPAY1 request. Works in airplane mode.</Message>
+      <Message>Scan the receiver’s OfflinePay request. It works in airplane mode after both phones have synced once and the payer has loaded vouchers.</Message>
       {!preview && <OfflineScanner onScan={scan} />}
       {error ? <Banner title={error} tone="warning" /> : null}
       <Button title="Back" variant="ghost" disabled={busy} onPress={() => router.back()} />

@@ -7,7 +7,8 @@ import { z } from 'zod';
 import type { KeyService, LedgerService, OfflineFlows, ReceivedStore, VoucherWallet } from '../services/types';
 
 export const REQUEST_TTL_SECONDS = 300;
-export const MAX_FRAME_CHARS = 1800;
+// Keep each QR less dense so lower-end phone cameras can read it reliably.
+export const MAX_FRAME_CHARS = 1200;
 export const MAX_PROOF_CHARS = 128_000;
 export const MAX_FRAMES = 128;
 const address = z.string().refine((value) => isAddress(value, { strict: true }), 'Invalid address checksum')

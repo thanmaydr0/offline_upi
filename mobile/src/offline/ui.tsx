@@ -23,7 +23,7 @@ export function QrDisplay({ frames }: { frames: string[] }) {
   const [paused, setPaused] = useState(false);
   useEffect(() => {
     if (frames.length < 2 || paused) return;
-    const timer = setInterval(() => setIndex((value) => (value + 1) % frames.length), 1000);
+    const timer = setInterval(() => setIndex((value) => (value + 1) % frames.length), 1500);
     return () => clearInterval(timer);
   }, [frames.length, paused]);
   const current = Math.min(index, frames.length - 1);
@@ -42,15 +42,31 @@ export function QrDisplay({ frames }: { frames: string[] }) {
 export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<void> }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [focused, setFocused] = useState(false);
-  const [active, setActive] = useState(AppState.currentState === 'active');
+  const [active, setActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const [torch, setTorch] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [scanStatus, setScanStatus] = useState('Starting camera…');
   const scanning = useRef(false);
   const lastScan = useRef(0);
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
   useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => setActive(state === 'active'));
     return () => subscription.remove();
+  }, []);
+  const handleBarcode = useCallback(({ data }: { data: string }) => {
+    if (scanning.current || Date.now() - lastScan.current < 350) return;
+    scanning.current = true;
+    lastScan.current = Date.now();
+    setScanStatus('QR detected. Checking it on this phone…');
+    void onScanRef.current(data)
+      .catch(() => setCameraError('QR detected, but could not process it. Try a fresh OfflinePay QR.'))
+      .finally(() => {
+        scanning.current = false;
+        setScanStatus('Camera ready. Hold the complete QR inside the frame.');
+      });
   }, []);
   if (!permission) return <Message>Checking camera permission…</Message>;
   if (!permission.granted) return <>
@@ -64,16 +80,14 @@ export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<v
     <View style={styles.camera}>
       {focused && active && <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={torch}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onMountError={({ message }) => setCameraError(message)}
-        onBarcodeScanned={({ data }) => {
-          if (scanning.current || Date.now() - lastScan.current < 350) return;
-          scanning.current = true; lastScan.current = Date.now();
-          void onScan(data).catch(() => setCameraError('Could not read QR. Try again.')).finally(() => { scanning.current = false; });
-        }} />}
+        onCameraReady={() => { setCameraReady(true); setCameraError(''); setScanStatus('Camera ready. Hold the complete QR inside the frame.'); }}
+        onMountError={({ message }) => { setCameraReady(false); setCameraError(`Camera could not start: ${message}`); setScanStatus('Camera unavailable. Check app camera permission.'); }}
+        onBarcodeScanned={handleBarcode} />}
     </View>
     <Button title={torch ? 'Torch off' : 'Torch on'} variant="secondary" onPress={() => setTorch((value) => !value)} />
     {cameraError ? <Message>{cameraError}</Message> : null}
-    <Message>Hold steady. Reduce glare and keep the whole QR visible.</Message>
+    <Message>{cameraReady ? scanStatus : focused && active ? scanStatus : 'Camera paused while this screen is not active.'}</Message>
+    <Message>Only OfflinePay request and proof QR codes work here. Keep the full code visible and reduce glare.</Message>
   </>;
 }
 const styles = StyleSheet.create({

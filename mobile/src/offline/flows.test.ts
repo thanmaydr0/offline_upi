@@ -4,7 +4,7 @@ import {
   decodePayload, encodePayload, reassembleFrames, splitFrames, PAYMENT_TYPES, VOUCHER_TYPES,
   type Hex, type LedgerEntry, type Payment, type PaymentProof, type ProofItem, type StoredVoucher, type VerifyResult,
 } from '@offline-pay/shared';
-import { exposureRisk, formatOfflineInr, OfflineFlowController, type FlowDependencies } from './flows';
+import { exposureRisk, formatOfflineInr, MAX_FRAME_CHARS, OfflineFlowController, type FlowDependencies } from './flows';
 
 // Public deterministic test keys, never used outside these in-memory fixtures.
 const issuer = privateKeyToAccount(`0x${'11'.repeat(32)}`);
@@ -98,13 +98,14 @@ describe('two offline devices with real shared CBOR and EIP-712 helpers', () => 
     expect(await receiver.flow.receiveFrame(frames[frames.length - 1])).toEqual(progress);
     expect(await receive(receiver.flow, [...frames].reverse().slice(1))).toEqual({ ok: true, risk: 'low', totalInrPaise: 800n });
     expect(receiver.pending).toHaveLength(3);
+    expect(receiver.pending.reduce((sum, item) => sum + BigInt(item.voucher.inrPaise), 0n)).toBe(800n);
     expect(await receiver.flow.getOpenRequest()).toBeNull();
   });
   test('rejects a tampered signed field after reassembling valid CBOR', async () => {
     const { receiver, frames } = await transaction();
     const proof = decodePayload<PaymentProof>(reassembleFrames(frames));
     proof.items[0].voucher.inrPaise += 1;
-    expect(await receive(receiver.flow, splitFrames(encodePayload(proof)))).toMatchObject({ ok: false, reason: 'invalid_issuer_signature' });
+    expect(await receive(receiver.flow, splitFrames(encodePayload(proof), MAX_FRAME_CHARS))).toMatchObject({ ok: false, reason: 'invalid_issuer_signature' });
     expect(receiver.pending).toHaveLength(0);
   });
   test('tampered frame never credits funds, original frames can be scanned again', async () => {
@@ -237,14 +238,14 @@ describe('hostile input and cached risk policy', () => {
     const proof = decodePayload<PaymentProof>(reassembleFrames(frames));
     proof.items[0].payment.payee = issuer.address;
     proof.items[0].deviceSig = await payer.signTypedData({ domain, types: PAYMENT_TYPES, primaryType: 'Payment', message: proof.items[0].payment });
-    expect(await receive(receiver.flow, splitFrames(encodePayload(proof)))).toMatchObject({ ok: false, reason: 'wrong_payee' });
+    expect(await receive(receiver.flow, splitFrames(encodePayload(proof), MAX_FRAME_CHARS))).toMatchObject({ ok: false, reason: 'wrong_payee' });
   });
   test('rejects passed payment deadlines beyond the shared clock-skew allowance', async () => {
     const { receiver, frames } = await transaction([100]);
     const proof = decodePayload<PaymentProof>(reassembleFrames(frames));
     proof.items[0].payment.deadline = BigInt(now - 301);
     proof.items[0].deviceSig = await payer.signTypedData({ domain, types: PAYMENT_TYPES, primaryType: 'Payment', message: proof.items[0].payment });
-    expect(await receive(receiver.flow, splitFrames(encodePayload(proof)))).toMatchObject({ ok: false, reason: 'payment_deadline_passed' });
+    expect(await receive(receiver.flow, splitFrames(encodePayload(proof), MAX_FRAME_CHARS))).toMatchObject({ ok: false, reason: 'payment_deadline_passed' });
   });
   test('does not show a successful receipt when ReceivedStore fails', async () => {
     const { receiver, frames } = await transaction([100]);
