@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import * as Network from 'expo-network';
 import * as WebBrowser from 'expo-web-browser';
+import * as Crypto from 'expo-crypto';
 import { z } from 'zod';
 import { services, servicesMode } from '../services';
 import { ledgerService } from '../core';
@@ -24,6 +25,7 @@ export const syncEngine = new SyncEngine({ ...services, store: localStore,
     return ledgerService.reconcileAfterServerWitness(head);
   } : undefined });
 export const loadBalanceFlow = new LoadBalanceFlow({ ...services, store: localStore,
+  newAttemptId: () => Crypto.randomUUID(),
   acceptMockPaid: servicesMode === 'mock',
   async openPayment(url) {
     if (servicesMode === 'mock') return 'opened';

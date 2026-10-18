@@ -83,10 +83,10 @@ export class FetchApiClient implements ApiClient {
     try { return (await this.request('/v1/kyc/status', statusSchema)).status; }
     catch (error) { if (error instanceof ApiError && error.status === 404) return 'not_started'; throw error; }
   }
-  async createOnramp(amountInr: number) {
+  async createOnramp(amountInr: number, attemptId?: string) {
     const base = await this.baseUrl();
     const order = await this.request('/v1/onramp/create', z.object({ orderId: z.string().min(1), paymentUrl: z.string().min(1), status: z.string() }),
-      { amountInr: integerSchema.positive().parse(amountInr) }, true, true, base);
+      { amountInr: integerSchema.positive().parse(amountInr), ...(attemptId ? { attemptId: z.string().uuid().parse(attemptId) } : {}) }, true, true, base);
     let paymentUrl: string;
     try {
       paymentUrl = new URL(order.paymentUrl, `${base}/`).toString();

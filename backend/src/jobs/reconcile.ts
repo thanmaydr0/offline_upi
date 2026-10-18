@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { deploymentBlock } from '../chain/deployment.js';
 import type { AppContext } from '../context.js';
 import { RealChain, vaultAbi } from '../chain/real/index.js';
 import { SettlementService } from '../routes/settle-service.js';
@@ -17,11 +17,10 @@ export class ReconciliationJob {
       if (chain instanceof RealChain) {
         const scope = `${chain.env.CHAIN_ID}:${chain.vault.toLowerCase()}`;
         const cursor = db.prepare('SELECT block FROM chain_cursors WHERE scope = ?').get(scope) as { block: string } | undefined;
-        const deployment = JSON.parse(readFileSync(new URL(chain.env.CHAIN_ID === 84532 ? '../../../contracts/deployments/baseSepolia.json' : '../../../contracts/deployments/localhost.json', import.meta.url), 'utf8')) as { block: number };
         const height = await chain.publicClient.getBlockNumber();
         // Keep two blocks behind the tip on live networks. Hardhat mines deterministically.
         const end = chain.env.CHAIN_ID === 31337 ? height : height > 2n ? height - 2n : 0n;
-        for (let from = cursor ? BigInt(cursor.block) + 1n : BigInt(deployment.block); from <= end; from += 200n) {
+        for (let from = cursor ? BigInt(cursor.block) + 1n : deploymentBlock(chain.env); from <= end; from += 200n) {
           const to = from + 199n < end ? from + 199n : end;
           const logs = await chain.publicClient.getContractEvents({ address: chain.vault, abi: vaultAbi, eventName: 'Redeemed', fromBlock: from, toBlock: to });
           for (const log of logs) {

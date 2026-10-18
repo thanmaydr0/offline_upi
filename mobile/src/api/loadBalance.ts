@@ -10,7 +10,7 @@ export type LoadJournal = z.infer<typeof loadJournalSchema>;
 export type LoadPhase = 'idle' | 'kyc' | 'creating' | 'payment' | 'polling' | 'issuing' | 'saving' | 'success' | 'cancelled' | 'failed';
 export type LoadState = { phase: LoadPhase; journal: LoadJournal | null; error: string | null };
 type Dependencies = { api: ApiClient; wallet: VoucherWallet; ledger: LedgerService; received: ReceivedStore;
-  store: LocalStore; openPayment: (url: string) => Promise<'cancel' | 'opened'>;
+  store: LocalStore; openPayment: (url: string) => Promise<'cancel' | 'opened'>; newAttemptId: () => string;
   sleep?: (ms: number) => Promise<void>; timeoutMs?: number; now?: () => number; acceptMockPaid?: boolean };
 
 export class LoadBalanceFlow {
@@ -52,8 +52,12 @@ export class LoadBalanceFlow {
       let journal = await this.deps.store.read('load', loadJournalSchema);
       if (journal?.complete) { this.update({ phase: 'success', journal }); return; }
       if (!journal) {
-        if (amountInr === undefined) { this.update({ phase: 'idle' }); return; }
+        const attemptSchema = z.object({ amountInr: integerSchema.positive(), attemptId: z.string().uuid() });
+        let attempt = await this.deps.store.read('load-attempt', attemptSchema);
+        if (amountInr === undefined && !attempt) { this.update({ phase: 'idle' }); return; }
+        amountInr = attempt?.amountInr ?? amountInr;
         integerSchema.positive().parse(amountInr);
+        if (amountInr === undefined) throw new Error('Choose an amount to load.');
         if (!Number.isSafeInteger(amountInr * 100)) throw new Error('Amount is too large.');
         this.update({ phase: 'kyc' });
         const kycStatus = await this.deps.api.kycStatus();
@@ -68,10 +72,15 @@ export class LoadBalanceFlow {
         }
         if (this.cancelled) return;
         this.update({ phase: 'creating' });
-        const order = await this.deps.api.createOnramp(amountInr);
+        if (!attempt) {
+          attempt = attemptSchema.parse({ amountInr, attemptId: this.deps.newAttemptId() });
+          await this.deps.store.write('load-attempt', attempt);
+        }
+        const order = await this.deps.api.createOnramp(attempt.amountInr, attempt.attemptId);
         journal = loadJournalSchema.parse({ amountInr, ...order, complete: false });
         // Persist orderId before launching a browser or asking the user to pay.
         await this.deps.store.write('load', journal);
+        await this.deps.store.remove('load-attempt');
       }
       this.update({ journal });
       if (this.cancelled) return;

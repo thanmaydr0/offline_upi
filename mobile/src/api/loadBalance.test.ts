@@ -3,6 +3,21 @@ import { LoadBalanceFlow } from './loadBalance';
 import { fixture, id, voucher } from './__tests__/fixtures';
 
 describe('load balance state machine', () => {
+  test('persists a checkout attempt before the request and reuses it after response loss', async () => {
+    const deps = fixture();
+    deps.api.createOnramp.mockImplementationOnce(async () => {
+      expect(deps.values.has('load-attempt')).toBe(true);
+      throw new Error('Response lost');
+    });
+    const flow = new LoadBalanceFlow({ ...deps, openPayment: async () => 'opened' });
+    await flow.start(100);
+    expect(flow.getState().phase).toBe('failed');
+    const restarted = new LoadBalanceFlow({ ...deps, newAttemptId: () => { throw new Error('Must reuse saved attempt'); }, openPayment: async () => 'opened' });
+    await restarted.start(500);
+    expect(deps.api.createOnramp.mock.calls).toEqual([[100, deps.newAttemptId()], [100, deps.newAttemptId()]]);
+    expect(restarted.getState().phase).toBe('success');
+    expect(deps.values.has('load-attempt')).toBe(false);
+  });
   test('reviewed payments retain the order and never issue vouchers or reopen checkout', async () => {
     const deps = fixture();
     deps.api.kycStatus.mockResolvedValue('provider_required');

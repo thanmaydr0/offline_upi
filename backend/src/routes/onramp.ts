@@ -8,7 +8,7 @@ import type { FiatWebhookEvent } from "../gateways/fiat.js";
 import { logger } from "../logger.js";
 import { OnrampMoneyGateway } from '../gateways/onramp.js';
 
-const createOrderSchema = z.object({ amountInr: z.number().int().positive().safe() }).strict();
+const createOrderSchema = z.object({ amountInr: z.number().int().positive().safe(), attemptId: uuidSchema.optional() }).strict();
 const webhookSchema = z.object({
   eventId: z.string().uuid(),
   orderId: z.string().uuid(),
@@ -93,15 +93,21 @@ export function onrampRoutes(context: AppContext): Router {
     const kyc = context.db.prepare("SELECT status FROM kyc WHERE user_id = ?").get(auth.userId) as { status: string } | undefined;
     // Onramp hosted checkout performs provider KYC; local timed approvals are mock-only.
     if (context.env.FIAT_GATEWAY === 'mock' && kyc?.status !== "approved") throw new HttpError(403, "KYC_REQUIRED", "Approved KYC is required before creating an onramp order.");
-    const id = randomUUID();
+    const id = body.attemptId ?? randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    context.db.prepare("INSERT INTO orders (id, user_id, device_id, amount_inr_paise, funded_usdc_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, '0', 'pending', ?, ?)")
+    const existing = context.db.prepare('SELECT user_id, device_id, amount_inr_paise, status FROM orders WHERE id = ?').get(id) as
+      { user_id: string; device_id: string; amount_inr_paise: number; status: string } | undefined;
+    if (existing && (existing.user_id !== auth.userId || existing.device_id !== auth.deviceId || existing.amount_inr_paise !== amountInrPaise)) {
+      throw new HttpError(409, 'ATTEMPT_CONFLICT', 'This payment attempt belongs to a different device or amount.');
+    }
+    if (!existing) context.db.prepare("INSERT INTO orders (id, user_id, device_id, amount_inr_paise, funded_usdc_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, '0', 'pending', ?, ?)")
       .run(id, auth.userId, auth.deviceId, amountInrPaise, now, now);
     try {
+      // Gateways return a hosted checkout URL tied to this merchant order ID.
       const gatewayOrder = await context.gateway.createOnramp({ orderId: id, amountInrPaise });
-      response.status(201).json({ orderId: id, paymentUrl: gatewayOrder.paymentUrl, status: gatewayOrder.status });
+      response.status(201).json({ orderId: id, paymentUrl: gatewayOrder.paymentUrl, status: existing?.status ?? gatewayOrder.status });
     } catch (error) {
-      context.db.prepare("DELETE FROM orders WHERE id = ? AND status = 'pending'").run(id);
+      if (!body.attemptId) context.db.prepare("DELETE FROM orders WHERE id = ? AND status = 'pending'").run(id);
       throw error;
     }
   });

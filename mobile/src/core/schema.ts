@@ -4,6 +4,7 @@ import type { Address, Hex, Payment, PaymentProof, ProofItem, StoredVoucher } fr
 const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((value) => value as Address);
 const hexSchema = z.string().regex(/^0x(?:[0-9a-fA-F]{2})+$/).transform((value) => value as Hex);
 const bytes32Schema = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform((value) => value.toLowerCase() as Hex);
+export const requestIdSchema = z.string().regex(/^0x[0-9a-fA-F]{32}$/).transform((value) => value.toLowerCase() as Hex);
 const bigintSchema = z.union([z.bigint(), z.string().regex(/^-?\d+$/).transform((value) => BigInt(value))]);
 
 export const voucherSchema = z.object({
@@ -36,7 +37,7 @@ export const proofItemSchema = z.object({
 
 export const paymentProofSchema = z.object({
   v: z.literal(1),
-  reqId: bytes32Schema,
+  reqId: requestIdSchema,
   items: z.array(proofItemSchema).min(1),
 });
 

@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 import type { Address } from "viem";
 import { verifyTypedData } from "viem";
-import { VOUCHER_TYPES } from "@offline-pay/shared";
+import { PAYMENT_TYPES, VOUCHER_TYPES } from "@offline-pay/shared";
+import { privateKeyToAccount } from 'viem/accounts';
 import { createApp } from "../src/app.js";
 import { createDatabase } from "../src/db/database.js";
 import { FakeChain } from "../src/chain/fake.js";
@@ -14,6 +15,7 @@ import {
   registerDevice,
   registrationBody,
   TEST_DEVICE_ADDRESS,
+  TEST_DEVICE_KEY,
   TEST_ISSUER_ADDRESS,
   testEnv,
   waitForKycApproval,
@@ -61,6 +63,54 @@ async function createFundedOrder(amountInr: number) {
 }
 
 describe("backend public and account routes", () => {
+  it('reuses a durable checkout attempt after a lost response and rejects changed amounts or owners', async () => {
+    const auth = await registerAndApprove();
+    const attemptId = randomUUID();
+    const create = (amountInr: number, token = auth.token) => request(context.app).post('/v1/onramp/create')
+      .set('Authorization', `Bearer ${token}`).send({ amountInr, attemptId });
+    const first = await create(100).expect(201);
+    const again = await create(100).expect(201);
+    expect(again.body).toEqual(first.body);
+    expect(context.db.prepare('SELECT COUNT(*) FROM orders WHERE id = ?').pluck().get(attemptId)).toBe(1);
+    await create(200).expect(409);
+    const other = await registerAndApprove('0x0000000000000000000000000000000000000113');
+    await create(100, other.token).expect(409);
+  });
+
+  it('settles a signed phone payment through the normal app and recovers its payout once', async () => {
+    const { token, order } = await createFundedOrder(100);
+    const issued = await request(context.app).post('/v1/vouchers/issue').set('Authorization', `Bearer ${token}`)
+      .send({ orderId: order.orderId }).expect(201);
+    const item = issued.body.vouchers[0] as { voucher: { voucherId: `0x${string}`; device: Address; usdcAmount: string; inrPaise: number; expiry: string }; issuerSig: `0x${string}` };
+    const payee = await registerDevice(context.app, '0x0000000000000000000000000000000000000114');
+    const bearer = { Authorization: `Bearer ${payee.token}` };
+    await request(context.app).post('/v1/payee/vpa').set(bearer).send({ vpa: 'receiver@testbank' }).expect(200);
+    const payment = { voucherId: item.voucher.voucherId, device: item.voucher.device,
+      payee: '0x0000000000000000000000000000000000000114' as Address,
+      usdcAmount: BigInt(item.voucher.usdcAmount), deadline: BigInt(item.voucher.expiry) };
+    const deviceSig = await privateKeyToAccount(TEST_DEVICE_KEY).signTypedData({
+      domain: { name: 'OfflineVault', version: '1', chainId: testEnv.CHAIN_ID, verifyingContract: testEnv.VAULT_ADDRESS as Address },
+      types: PAYMENT_TYPES, primaryType: 'Payment', message: payment,
+    });
+    const payload = { items: [{ ...item, payment: { ...payment, usdcAmount: payment.usdcAmount.toString(), deadline: payment.deadline.toString() }, deviceSig }] };
+    const payout = vi.spyOn(context.gateway, 'createPayout').mockRejectedValueOnce(new Error('Provider temporarily unavailable'));
+    const settled = await request(context.app).post('/v1/settle').set(bearer).send(payload).expect(200);
+    expect(settled.body.results).toEqual([{ voucherId: item.voucher.voucherId, status: 0 }]);
+    await request(context.app).get(`/v1/settle/${settled.body.settlementId}`).set(bearer).expect(200);
+    await request(context.app).get('/v1/payouts').set(bearer).expect(200)
+      .expect(({ body }) => expect(body.payouts[0].status).toBe('pending'));
+    dbAgePayouts();
+    await context.job.run();
+    await context.job.run();
+    await request(context.app).get('/v1/wallet').set(bearer).expect(200)
+      .expect(({ body }) => expect(body.onlineInrPaise).toBe(item.voucher.inrPaise));
+    const retry = await request(context.app).post('/v1/settle').set(bearer).send(payload).expect(200);
+    expect(retry.body.results).toEqual(settled.body.results);
+    expect(context.db.prepare('SELECT COUNT(*) FROM payouts').pluck().get()).toBe(1);
+    expect(payout).toHaveBeenCalledTimes(2);
+    payout.mockRestore();
+    function dbAgePayouts() { context.db.prepare('UPDATE payouts SET created_at = created_at - 2').run(); }
+  });
   it("serves config and health with the expected protocol fields", async () => {
     await request(context.app).get("/health").expect(200, { status: "ok" });
     const config = await request(context.app).get("/v1/config").expect(200);
@@ -134,6 +184,7 @@ describe("backend public and account routes", () => {
     const auth = await registerAndApprove();
     const paidOrder = await createOrder(auth.token, 250);
     const page = await request(context.app).get(paidOrder.paymentUrl).expect(200);
+    expect(page.headers['content-security-policy']).not.toContain('upgrade-insecure-requests');
     expect(page.text).toContain("Pay");
     expect(page.text).toContain("Fail");
     await request(context.app).post(`${paidOrder.paymentUrl}/action`).type("form").send({ result: "paid" }).expect(200);
@@ -180,7 +231,10 @@ describe("backend public and account routes", () => {
       expect(valid).toBe(true);
     }
     await request(context.app).post("/v1/vouchers/issue").set("Authorization", `Bearer ${token}`).send({ orderId: order.orderId })
-      .expect(409).expect(({ body }) => expect(body.error).toBe("NO_UNISSUED_COLLATERAL"));
+      .expect(201).expect(({ body }) => expect(body.vouchers).toEqual(vouchers));
+    expect(context.db.prepare('SELECT COUNT(*) FROM vouchers WHERE order_id = ?').pluck().get(order.orderId)).toBe(vouchers.length);
+    const other = await registerDevice(context.app, '0x0000000000000000000000000000000000000112');
+    await request(context.app).post('/v1/vouchers/issue').set('Authorization', `Bearer ${other.token}`).send({ orderId: order.orderId }).expect(404);
   });
 
   it("blocks voucher issuance for a device frozen after a ledger rollback", async () => {

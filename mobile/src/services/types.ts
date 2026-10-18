@@ -34,7 +34,7 @@ export interface ApiClient {
   getConfig(): Promise<Record<string, unknown>>;
   startKyc(): Promise<void>;
   kycStatus(): Promise<string>;
-  createOnramp(amountInr: number): Promise<{ orderId: string; paymentUrl: string; status: string }>;
+  createOnramp(amountInr: number, attemptId?: string): Promise<{ orderId: string; paymentUrl: string; status: string }>;
   onrampStatus(orderId: string): Promise<string>;
   issueVouchers(orderId: string): Promise<StoredVoucher[]>;
   getWallet(): Promise<Record<string, bigint>>;

@@ -5,6 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { PAYMENT_TYPES, VOUCHER_TYPES, type ProofItem } from "@offline-pay/shared";
 import { FakeChain } from "../src/chain/fake.js";
 import { REDEEM_STATUS } from "../src/chain/types.js";
+import { deploymentBlock } from '../src/chain/deployment.js';
 import { testEnv, TEST_ISSUER_KEY } from "./helpers.js";
 
 const issuer = privateKeyToAccount(TEST_ISSUER_KEY);
@@ -36,6 +37,12 @@ async function makeItem(options: { deviceAddress?: Address; expiry?: bigint; dea
 }
 
 describe("FakeChain redeem status simulation", () => {
+  it('resolves chain deployment blocks without ignored local deployment files', () => {
+    expect(deploymentBlock({ ...testEnv, CHAIN_ID: 31337 })).toBe(0n);
+    expect(deploymentBlock({ ...testEnv, CHAIN_DEPLOYMENT_BLOCK: 123 })).toBe(123n);
+    expect(deploymentBlock({ ...testEnv, VAULT_ADDRESS: '0x6e69218ac07732c4379fb1c3adc6fc49922c32f0' })).toBe(48281257n);
+    expect(() => deploymentBlock(testEnv)).toThrow('CHAIN_DEPLOYMENT_BLOCK');
+  });
   it("returns each status code specified for redeemBatch", async () => {
     const chain = new FakeChain({ chainId: testEnv.CHAIN_ID, vaultAddress: testEnv.VAULT_ADDRESS as Address, issuerAddress: issuer.address });
     await chain.fundCollateral(device.address, 100n);

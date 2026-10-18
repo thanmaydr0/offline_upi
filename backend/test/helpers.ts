@@ -1,7 +1,7 @@
 import request from "supertest";
 import type { Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createApp } from "../src/app.js";
+import { createApp, createAppRuntime } from "../src/app.js";
 import type { BackendEnv } from "../src/env.js";
 import { createDatabase, type BackendDatabase } from "../src/db/database.js";
 import { FakeChain } from "../src/chain/fake.js";
@@ -40,15 +40,16 @@ export const testEnv: BackendEnv = {
   WITHDRAW_DELAY_SECONDS: 604800,
 };
 
-export type TestContext = { app: ReturnType<typeof createApp>; db: BackendDatabase; chain: FakeChain; gateway: MockGateway };
+export type TestContext = { app: ReturnType<typeof createApp>; db: BackendDatabase; chain: FakeChain; gateway: MockGateway;
+  job: ReturnType<typeof createAppRuntime>['job'] };
 
 export function createTestApp(): TestContext {
   const db = createDatabase(":memory:");
   const gateway = new MockGateway(TEST_WEBHOOK_SECRET);
   const issuerAddress = privateKeyToAccount(TEST_ISSUER_KEY).address;
   const chain = new FakeChain({ chainId: testEnv.CHAIN_ID, vaultAddress: testEnv.VAULT_ADDRESS as Address, issuerAddress });
-  const app = createApp({ env: testEnv, db, chain, gateway, kycApprovalDelayMs: 100 });
-  return { app, db, chain, gateway };
+  const { app, job } = createAppRuntime({ env: testEnv, db, chain, gateway, kycApprovalDelayMs: 100 });
+  return { app, db, chain, gateway, job };
 }
 
 export function registrationBody(deviceAddress: string = TEST_DEVICE_ADDRESS, integrity = { rooted: false, isDevice: true }) {

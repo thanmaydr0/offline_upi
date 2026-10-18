@@ -10,12 +10,18 @@ import { publicRoutes } from "./routes/public.js";
 import { walletRoutes } from "./routes/wallet.js";
 import { NotConfigured } from "./chain/index.js";
 import { OnrampService } from './services/onramp.js';
+import { settleRoutes } from './routes/settle.js';
+import { SettlementService } from './routes/settle-service.js';
+import { settlementWalletRoutes } from './routes/settle-wallet.js';
+import { ReconciliationJob } from './jobs/reconcile.js';
 
-export function createApp(options: AppOptions) {
+export function createAppRuntime(options: AppOptions) {
   const context = createContext(options);
   const app = express();
   app.disable("x-powered-by");
-  app.use(helmet());
+  app.use(helmet({ contentSecurityPolicy: { directives: {
+    'upgrade-insecure-requests': context.env.FIAT_GATEWAY === 'mock' ? null : [],
+  } } }));
   app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false }));
   app.use(express.json({
     limit: "32kb",
@@ -38,6 +44,10 @@ export function createApp(options: AppOptions) {
   const onrampService = new OnrampService(context);
   app.locals.onrampService = onrampService;
   app.use(onrampService.routes());
+  const service = new SettlementService(context);
+  const job = new ReconciliationJob(context, service);
+  app.use(settleRoutes(context, service));
+  app.use(settlementWalletRoutes(context));
   app.use(walletRoutes(context));
   app.use((error: unknown, request: Request, response: express.Response, next: express.NextFunction) => {
     if (error instanceof NotConfigured) {
@@ -54,5 +64,9 @@ export function createApp(options: AppOptions) {
     }
     errorHandler(error, request, response, next);
   });
-  return app;
+  return { app, context, service, job, onrampService };
+}
+
+export function createApp(options: AppOptions) {
+  return createAppRuntime(options).app;
 }

@@ -93,6 +93,10 @@ export class DeviceKeyService implements KeyServiceInterface {
       this.state = "NOT_ENROLLED";
       throw new KeyServiceError("AUTH_NOT_ENROLLED", "Enroll a biometric or device credential before enabling offline mode.");
     }
+    if (!SecureStore.canUseBiometricAuthentication()) {
+      this.state = "NOT_ENROLLED";
+      throw new KeyServiceError("BIOMETRICS_REQUIRED", "Enroll a supported fingerprint or biometric before enabling offline payments. A screen-lock PIN alone cannot unlock the signing key.");
+    }
 
     if (present === "1") {
       const address = await SecureStore.getItemAsync(ADDRESS_STORE);

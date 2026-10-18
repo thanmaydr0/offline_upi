@@ -12,6 +12,7 @@ const schema = z.object({
   CHAIN_MODE: z.enum(["fake", "chain"]).default("fake"),
   RPC_URL: z.string().url().default("https://sepolia.base.org"),
   CHAIN_ID: positiveInteger.default(84532),
+  CHAIN_DEPLOYMENT_BLOCK: z.coerce.number().int().nonnegative().safe().optional(),
   VAULT_ADDRESS: address.default("0x0000000000000000000000000000000000000000"),
   USDC_ADDRESS: address.default("0x0000000000000000000000000000000000000000"),
   ISSUER_PRIVATE_KEY: privateKey,

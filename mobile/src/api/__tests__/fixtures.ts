@@ -57,5 +57,6 @@ export function fixture() {
     seenVoucher: jest.fn<ReceivedStore['seenVoucher']>().mockImplementation(async id => stored.has(id)),
     addVerified: jest.fn<ReceivedStore['addVerified']>().mockResolvedValue(undefined),
   };
-  return { api, wallet, ledger, received, store, values, stored, pending, entries };
+  return { api, wallet, ledger, received, store, values, stored, pending, entries,
+    newAttemptId: () => '00000000-0000-4000-8000-000000000001' };
 }

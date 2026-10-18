@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { deploymentBlock } from '../deployment.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createPublicClient, createWalletClient, defineChain, http, encodeFunctionData, decodeFunctionData, keccak256, parseEventLogs, type Abi, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -128,8 +129,7 @@ export class RealChain implements ChainClient {
   async getCollateral(device: Address): Promise<bigint> { return await this.publicClient.readContract({ address: this.vault, abi: vaultAbi, functionName: 'collateral', args: [device] }) as bigint; }
   async findRedemption(voucherId: Hex): Promise<{ payee: Address; deadline: bigint } | undefined> {
     const height = await this.publicClient.getBlockNumber();
-    const deployment = JSON.parse(readFileSync(new URL(this.env.CHAIN_ID === 84532 ? '../../../../contracts/deployments/baseSepolia.json' : '../../../../contracts/deployments/localhost.json', import.meta.url), 'utf8')) as { block: number };
-    for (let start = BigInt(deployment.block); start <= height; start += 200n) {
+    for (let start = deploymentBlock(this.env); start <= height; start += 200n) {
       const logs = await this.publicClient.getContractEvents({ address: this.vault, abi: vaultAbi, eventName: 'Redeemed', args: { voucherId }, fromBlock: start, toBlock: start + 199n < height ? start + 199n : height });
       for (const log of logs) {
         const tx = await this.publicClient.getTransaction({ hash: log.transactionHash });

@@ -8,6 +8,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.offlinepay.app",
+      "allowBackup": false,
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
@@ -20,6 +21,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/withPreviewNetwork.js",
       "expo-dev-client",
       "expo-secure-store",
       [

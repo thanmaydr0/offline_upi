@@ -10,15 +10,19 @@ import { BalanceCard, Banner, Button, Screen, ScreenHeader, SectionTitle, useApp
 export default function HomeScreen() {
   const theme = useAppTheme();
   const { snapshot } = useSync();
-  const [offline, setOffline] = useState(0n);
+  const [offline, setOffline] = useState<bigint | null>(null);
   const onlinePaise = snapshot?.wallet.onlineInrPaise ?? 0n;
-  const offlinePaise = snapshot?.offlinePaise ?? offline;
+  const offlinePaise = offline ?? snapshot?.offlinePaise ?? 0n;
   const amountsFit = onlinePaise <= BigInt(Number.MAX_SAFE_INTEGER) && offlinePaise <= BigInt(Number.MAX_SAFE_INTEGER);
   useEffect(() => { enableSync(); }, []);
-  useFocusEffect(useCallback(() => {
-    void services.wallet.offlineBalancePaise().then(setOffline).catch(() => undefined);
+  const refreshOffline = useCallback(() => {
+    let active = true;
+    void services.wallet.offlineBalancePaise().then(value => { if (active) setOffline(value); }).catch(() => undefined);
     void loadBalanceFlow.hydrate().catch(() => undefined);
-  }, []));
+    return () => { active = false; };
+  }, []);
+  useFocusEffect(refreshOffline);
+  useEffect(() => refreshOffline(), [snapshot, refreshOffline]);
   useEffect(() => {
     if (!snapshot) return;
     const values = [snapshot.wallet.onlineInrPaise ?? 0n, snapshot.offlinePaise, snapshot.wallet.pendingSettlementPaise ?? 0n];

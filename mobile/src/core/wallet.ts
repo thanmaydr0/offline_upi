@@ -5,7 +5,7 @@ import { getOfflineLimits } from "./config";
 import { withCoreDatabase } from "./database";
 import { assertOfflineIntegrity } from "./integrity";
 import { assertLedgerHealthy, ledgerService } from "./ledger";
-import { parseJson, parseStoredVoucher, stringifyJson } from "./schema";
+import { parseJson, parseStoredVoucher, requestIdSchema, stringifyJson } from "./schema";
 import type { VoucherWallet as VoucherWalletInterface } from "../services/types";
 
 const voucherIdSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/).transform((value) => value.toLowerCase() as Hex);
@@ -153,7 +153,7 @@ export class SqliteVoucherWallet implements VoucherWalletInterface {
 
   async markSpent(voucherIds: Hex[], reqId: Hex): Promise<void> {
     const ids = voucherIds.map((id) => voucherIdSchema.parse(id));
-    const parsedReqId = voucherIdSchema.parse(reqId);
+    const parsedReqId = requestIdSchema.parse(reqId);
     if (ids.length === 0 || new Set(ids.map((id) => id.toLowerCase())).size !== ids.length) {
       throw new Error("A spend must include unique voucher IDs.");
     }

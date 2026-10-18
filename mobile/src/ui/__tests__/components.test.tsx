@@ -1,9 +1,27 @@
 import { fireEvent, render } from '@testing-library/react-native';
+import { useEffect as mockUseEffect } from 'react';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import HomeScreen from '../../app/(tabs)/index';
 import { useBalanceStore } from '@/state/balances';
 import { AmountKeypad, BalanceCard } from '../primitives';
+
+let mockOfflineBalance = 88_000n;
+const mockSyncState = { running: false, error: null, snapshot: {
+  wallet: { onlineInrPaise: 4_623_800n, pendingSettlementPaise: 0n }, offlinePaise: 88_000n,
+  history: [{ id: 'one', type: 'onramp', amountInrPaise: 10000, status: 'funded' }], lastSync: 1,
+} };
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn() },
+  useFocusEffect: (callback: () => void) => mockUseEffect(callback, [callback]),
+}));
+jest.mock('@/services', () => ({ servicesMode: 'real', services: {
+  wallet: { offlineBalancePaise: async () => mockOfflineBalance },
+} }));
+jest.mock('@/sync/runtime', () => ({
+  useSync: () => mockSyncState, enableSync: jest.fn(),
+  loadBalanceFlow: { hydrate: async () => undefined }, syncEngine: { run: async () => undefined },
+}));
 
 jest.mock('expo-haptics', () => ({
   impactAsync: () => Promise.resolve(),
@@ -40,17 +58,25 @@ describe('BalanceCard', () => {
 
 describe('Home screen', () => {
   beforeEach(() => {
+    mockOfflineBalance = 88_000n;
     useBalanceStore.setState({ onlinePaise: 4_623_800, offlinePaise: 88_000 });
   });
 
-  it('renders mock balances, payment actions, and the offline-ready call to action', async () => {
+  it('renders synced balances and the real payment actions', async () => {
     const { getByText, getByTestId } = await render(<HomeScreen />);
 
-    expect(getByText('Good morning, Ananya')).toBeTruthy();
+    expect(getByText('Your OfflinePay wallet')).toBeTruthy();
     expect(getByText('Pay')).toBeTruthy();
     expect(getByText('Receive')).toBeTruthy();
-    expect(getByText('Get offline-ready')).toBeTruthy();
+    expect(getByText('Load Offline Balance')).toBeTruthy();
     expect(getByTestId('balance-total').props.children).toBe('₹47,118');
-    expect(getByText('Coffee House')).toBeTruthy();
+    expect(getByText('onramp')).toBeTruthy();
+  });
+
+  it('shows the current local balance after an offline payment instead of the old sync balance', async () => {
+    mockOfflineBalance = 0n;
+    const { getByTestId } = await render(<HomeScreen />);
+    expect(getByTestId('balance-offline').props.children).toBe('₹0');
+    expect(getByTestId('balance-total').props.children).toBe('₹46,238');
   });
 });

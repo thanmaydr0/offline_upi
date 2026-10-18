@@ -7,6 +7,7 @@ import type { AuthContext } from '../auth.js';
 import type { RedeemResult } from '../chain/types.js';
 import { RealChain, stringify } from '../chain/real/index.js';
 import { HttpError } from '../http.js';
+import { logger } from '../logger.js';
 
 const uint = z.union([z.string().regex(/^(0|[1-9][0-9]{0,77})$/), z.number().int().nonnegative().safe(), z.bigint().nonnegative()]).transform(BigInt);
 const wireItem = z.object({
@@ -143,8 +144,14 @@ export class SettlementService {
     const existing = db.prepare('SELECT status, gateway_reference FROM payouts WHERE id = ?').get(id) as { status: string; gateway_reference: string | null };
     if (!existing.gateway_reference) {
       // FiatGateway implementations must honor payoutId as their provider idempotency key.
-      const result = await gateway.createPayout({ payoutId: id, amountInrPaise: amount, vpa: payee.payee_vpa });
-      db.prepare('UPDATE payouts SET gateway_reference = ?, status = ?, updated_at = ? WHERE id = ?').run(result.reference, result.status, now, id);
+      try {
+        const result = await gateway.createPayout({ payoutId: id, amountInrPaise: amount, vpa: payee.payee_vpa });
+        db.prepare('UPDATE payouts SET gateway_reference = ?, status = ?, updated_at = ? WHERE id = ?').run(result.reference, result.status, now, id);
+      } catch {
+        // Redemption already succeeded. Retain a durable pending payout for retry,
+        // without returning a false settlement failure or claiming fiat was paid.
+        logger.warn({ event: 'payout_submission_pending', payoutId: id });
+      }
     }
   }
   async recover(): Promise<void> {

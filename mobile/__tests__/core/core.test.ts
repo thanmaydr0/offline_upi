@@ -5,6 +5,11 @@ import { resetCoreDatabaseConnectionForTests } from "../../src/core/database";
 import { ExactChangeError, OfflineSpendLimitError, SqliteVoucherWallet } from "../../src/core/wallet";
 import { HashChainLedger, ledgerService, resetLedgerTamperStateForTests } from "../../src/core/ledger";
 import { setDevelopmentIntegrityOverride } from "../../src/core/integrity";
+import { SqliteReceivedStore } from "../../src/core/received";
+import { parsePaymentProof } from "../../src/core/schema";
+import { OfflineFlowController, type FlowDependencies } from "../../src/offline/flows";
+import { encodePayload, VOUCHER_TYPES } from "@offline-pay/shared";
+import { privateKeyToAccount } from "viem/accounts";
 
 type MockFunction<Args extends unknown[], Result> = ((...args: Args) => Result) & {
   mock: { calls: Args[] };
@@ -220,6 +225,7 @@ class MockDatabase {
 
 const mockDatabase = new MockDatabase();
 const mockSecureStore = {
+  canUseBiometricAuthentication: jest.fn(() => true),
   getItemAsync: jest.fn(async (key: string) => mockSecureItems.get(key) ?? null),
   setItemAsync: jest.fn(async (key: string, value: string) => { mockSecureItems.set(key, value); }),
   deleteItemAsync: jest.fn(async (key: string) => { mockSecureItems.delete(key); }),
@@ -233,6 +239,7 @@ const mockLocalAuthentication = {
 jest.mock("expo-sqlite", () => ({ openDatabaseAsync: async () => mockDatabase }));
 jest.mock("expo-secure-store", () => ({
   __esModule: true,
+  canUseBiometricAuthentication: () => mockSecureStore.canUseBiometricAuthentication(),
   getItemAsync: (key: string) => mockSecureStore.getItemAsync(key),
   setItemAsync: (key: string, value: string) => mockSecureStore.setItemAsync(key, value),
   deleteItemAsync: (key: string) => mockSecureStore.deleteItemAsync(key),
@@ -248,24 +255,11 @@ jest.mock("expo-local-authentication", () => ({
   isEnrolledAsync: () => mockLocalAuthentication.isEnrolledAsync(),
   getEnrolledLevelAsync: () => mockLocalAuthentication.getEnrolledLevelAsync(),
 }));
-jest.mock("@offline-pay/shared", () => ({
-  CLOCK_SKEW_SECONDS: 300n,
-  PAYMENT_TYPES: {
-    Payment: [
-      { name: "voucherId", type: "bytes32" },
-      { name: "device", type: "address" },
-      { name: "payee", type: "address" },
-      { name: "usdcAmount", type: "uint256" },
-      { name: "deadline", type: "uint64" },
-    ],
-  },
-}));
-
 const MOCK_NOW = 1_800_000_000_000;
 const TEST_DEVICE = `0x${"11".repeat(20)}` as Address;
 const TEST_PAYEE = `0x${"22".repeat(20)}` as Address;
 const TEST_VAULT = `0x${"33".repeat(20)}` as Address;
-const TEST_REQ_ID = `0x${"aa".repeat(32)}` as Hex;
+const TEST_REQ_ID = `0x${"aa".repeat(16)}` as Hex;
 
 function makeVoucher(id: number, denomination: number): StoredVoucher {
   return {
@@ -288,6 +282,7 @@ async function prepare(config: { maxSingle?: number; maxDaily?: number } = {}): 
   mockDevice.getUptimeAsync.mockImplementation(async () => mockUptime);
   mockLocalAuthentication.getEnrolledLevelAsync.mockResolvedValue(3);
   mockLocalAuthentication.isEnrolledAsync.mockResolvedValue(true);
+  mockSecureStore.canUseBiometricAuthentication.mockImplementation(() => true);
   mockSecureItems.clear();
   mockSecureStore.getItemAsync.mockClear();
   mockSecureStore.setItemAsync.mockClear();
@@ -310,6 +305,78 @@ async function prepare(config: { maxSingle?: number; maxDaily?: number } = {}): 
 describe("offline core services", () => {
   beforeEach(async () => prepare());
   afterEach(() => jest.useRealTimers());
+
+  test("rejects voucher-sized or malformed request IDs before consuming any notes", async () => {
+    const wallet = new SqliteVoucherWallet();
+    const item = makeVoucher(99, 100);
+    await wallet.addIssued([item]);
+    for (const reqId of [`0x${'aa'.repeat(32)}`, '0x1234', `0x${'gg'.repeat(16)}`]) {
+      await expect(wallet.markSpent([item.voucher.voucherId], reqId as Hex)).rejects.toBeInstanceOf(Error);
+    }
+    await expect(wallet.offlineBalancePaise()).resolves.toBe(100n);
+    expect(mockTables.spent.size).toBe(0);
+  });
+
+  test("round-trips a real signed QR payment through core wallet, ledger and received persistence", async () => {
+    // Only native APIs are mocked. Use the actual key signer, codec, verifier and core stores.
+    const issuer = privateKeyToAccount(`0x${'03'.repeat(32)}`);
+    const receiverAccount = privateKeyToAccount(`0x${'02'.repeat(32)}`);
+    const keys = new DeviceKeyService();
+    const { address } = await keys.init();
+    const config = { serverTime: new Date(MOCK_NOW).toISOString(), chainId: 84532,
+      issuerAddress: issuer.address, vaultAddress: TEST_VAULT, revokedDevices: [],
+      limits: { maxSingleOfflinePaymentPaise: 5000, maxOfflineSpend24hPaise: 5000, merchantMaxUnsettledPaise: 10000 } };
+    await cacheServerConfig(config);
+    const domain = { name: 'OfflineVault', version: '1', chainId: 84532, verifyingContract: TEST_VAULT } as const;
+    const voucher = { ...makeVoucher(98, 100).voucher, device: address };
+    const item = { voucher, issuerSig: await issuer.signTypedData({ domain, types: VOUCHER_TYPES, primaryType: 'Voucher', message: voucher }) };
+    const wallet = new SqliteVoucherWallet();
+    await wallet.addIssued([item]);
+    const receiverStore = new SqliteReceivedStore();
+    const makeFlow = (flowKeys: FlowDependencies['keys'], storage = new Map<string, unknown>()) => new OfflineFlowController({
+      keys: flowKeys, wallet, ledger: ledgerService, received: receiverStore,
+      storage: { get: async key => storage.get(key) ?? null, set: async (key, value) => { storage.set(key, value); } },
+      cachedConfig: async () => config, nowSeconds: async () => Math.floor(MOCK_NOW / 1000),
+      randomBytes: async count => new Uint8Array(count).fill(7),
+      assertClockHealthy: async () => { if (await isClockSuspicious()) throw new Error('Clock not trusted'); },
+      walletAppendsSpendLedger: true,
+    });
+    const receiver = makeFlow({
+      init: async () => ({ address: receiverAccount.address }), getAddress: async () => receiverAccount.address,
+      signPayments: async () => { throw new Error('Receiver must not sign'); }, integrity: () => keys.integrity(),
+    });
+    const payerStorage = new Map<string, unknown>();
+    const request = await receiver.createRequest(100);
+    expect(request.reqId.length).toBe(34);
+    const payer = makeFlow(keys, payerStorage);
+    const scanned = await payer.parseRequestQr(encodePayload(request));
+    const frames = await payer.payRequest(scanned);
+    await expect(wallet.offlineBalancePaise()).resolves.toBe(0n);
+    expect(mockTables.spent.get(voucher.voucherId)?.req_id).toBe(request.reqId);
+    await expect(ledgerService.verifyChain()).resolves.toEqual({ ok: true });
+    await expect(makeFlow(keys, payerStorage).payRequest(request)).rejects.toBeInstanceOf(Error);
+
+    // Switch to an independent receiver database, as on a second physical phone.
+    clearMockTables();
+    let result;
+    for (const frame of frames) result = await receiver.receiveFrame(frame);
+    expect(result).toMatchObject({ ok: true, totalInrPaise: 100n });
+    await expect(new SqliteReceivedStore().pending()).resolves.toHaveLength(1);
+    const pending = await receiverStore.pending();
+    const persisted = parsePaymentProof({ v: 1, reqId: request.reqId, items: pending });
+    expect(persisted.reqId).toBe(request.reqId);
+    await expect(receiverStore.seenVoucher(voucher.voucherId)).resolves.toBe(true);
+    await receiverStore.markSettled(voucher.voucherId, 0);
+    await expect(receiverStore.pending()).resolves.toHaveLength(0);
+    await expect(receiverStore.addVerified(persisted)).rejects.toBeInstanceOf(Error);
+  });
+
+  test("reports PIN-only authentication before attempting to create a protected signing key", async () => {
+    mockLocalAuthentication.getEnrolledLevelAsync.mockResolvedValue(1);
+    mockSecureStore.canUseBiometricAuthentication.mockImplementation(() => false);
+    await expect(new DeviceKeyService().init()).rejects.toMatchObject({ code: 'BIOMETRICS_REQUIRED' });
+    expect(mockSecureItems.has('offlinepay.device-private-key.v1')).toBe(false);
+  });
 
   test("selects exact change and reports available denominations when no solution exists", async () => {
     const wallet = new SqliteVoucherWallet();

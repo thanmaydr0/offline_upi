@@ -54,6 +54,13 @@ export async function issueVouchers(
   if (!order) throw new HttpError(404, "ORDER_NOT_FOUND", "No onramp order was found for this device.");
   if (order.rooted) throw new HttpError(403, "ROOTED_DEVICE", "Vouchers cannot be issued to a rooted or non-device integrity result.");
   if (order.frozen) throw new HttpError(403, "DEVICE_FROZEN", "Vouchers cannot be issued to a frozen device.");
+  // Recover a lost HTTP response without minting another set of signed notes.
+  const existing = db.prepare('SELECT voucher_id, usdc_amount, inr_paise, expiry, signature FROM vouchers WHERE order_id = ? ORDER BY rowid')
+    .all(order.id) as { voucher_id: Hex; usdc_amount: string; inr_paise: number; expiry: number; signature: Hex }[];
+  if (existing.length) return existing.map(row => ({ voucher: {
+    voucherId: row.voucher_id, device: order.address, usdcAmount: row.usdc_amount,
+    inrPaise: row.inr_paise, expiry: String(row.expiry),
+  }, issuerSig: row.signature }));
   if (order.status !== "funded") throw new HttpError(409, "ORDER_NOT_FUNDED", "The order must be funded before vouchers can be issued.");
 
   const alreadyIssuedForOrder = db.prepare("SELECT inr_paise, usdc_amount FROM vouchers WHERE order_id = ?").all(order.id) as { inr_paise: number; usdc_amount: string }[];
