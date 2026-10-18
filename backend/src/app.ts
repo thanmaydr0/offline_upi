@@ -9,6 +9,7 @@ import { onrampRoutes } from "./routes/onramp.js";
 import { publicRoutes } from "./routes/public.js";
 import { walletRoutes } from "./routes/wallet.js";
 import { NotConfigured } from "./chain/index.js";
+import { OnrampService } from './services/onramp.js';
 
 export function createApp(options: AppOptions) {
   const context = createContext(options);
@@ -34,6 +35,9 @@ export function createApp(options: AppOptions) {
   app.use(publicRoutes(context));
   app.use(kycRoutes(context));
   app.use(onrampRoutes(context));
+  const onrampService = new OnrampService(context);
+  app.locals.onrampService = onrampService;
+  app.use(onrampService.routes());
   app.use(walletRoutes(context));
   app.use((error: unknown, request: Request, response: express.Response, next: express.NextFunction) => {
     if (error instanceof NotConfigured) {

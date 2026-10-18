@@ -6,6 +6,7 @@ import type { AppContext } from "../context.js";
 import { HttpError, parse, uuidSchema } from "../http.js";
 import type { FiatWebhookEvent } from "../gateways/fiat.js";
 import { logger } from "../logger.js";
+import { OnrampMoneyGateway } from '../gateways/onramp.js';
 
 const createOrderSchema = z.object({ amountInr: z.number().int().positive().safe() }).strict();
 const webhookSchema = z.object({
@@ -90,7 +91,8 @@ export function onrampRoutes(context: AppContext): Router {
       throw new HttpError(400, "AMOUNT_OUT_OF_RANGE", "amountInr must fit within the configured offline balance limit.");
     }
     const kyc = context.db.prepare("SELECT status FROM kyc WHERE user_id = ?").get(auth.userId) as { status: string } | undefined;
-    if (kyc?.status !== "approved") throw new HttpError(403, "KYC_REQUIRED", "Approved KYC is required before creating an onramp order.");
+    // Onramp hosted checkout performs provider KYC; local timed approvals are mock-only.
+    if (context.env.FIAT_GATEWAY === 'mock' && kyc?.status !== "approved") throw new HttpError(403, "KYC_REQUIRED", "Approved KYC is required before creating an onramp order.");
     const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     context.db.prepare("INSERT INTO orders (id, user_id, device_id, amount_inr_paise, funded_usdc_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, '0', 'pending', ?, ?)")
@@ -110,7 +112,11 @@ export function onrampRoutes(context: AppContext): Router {
     const order = context.db.prepare("SELECT id, amount_inr_paise, status, created_at, updated_at FROM orders WHERE id = ? AND user_id = ? AND device_id = ?")
       .get(orderId, auth.userId, auth.deviceId) as { id: string; amount_inr_paise: number; status: string; created_at: number; updated_at: number } | undefined;
     if (!order) throw new HttpError(404, "ORDER_NOT_FOUND", "No onramp order was found for this device.");
-    response.json({ orderId: order.id, amountInrPaise: order.amount_inr_paise, status: order.status, createdAt: order.created_at, updatedAt: order.updated_at });
+    const receipt = context.env.FIAT_GATEWAY === 'onramp'
+      ? context.db.prepare('SELECT state FROM onramp_receipts WHERE order_id = ?').get(orderId) as { state: string } | undefined
+      : undefined;
+    response.json({ orderId: order.id, amountInrPaise: order.amount_inr_paise,
+      status: receipt?.state === 'review' ? 'review' : order.status, createdAt: order.created_at, updatedAt: order.updated_at });
   });
 
   router.post("/v1/vouchers/issue", createAuthMiddleware(context.env, context.db), async (request, response) => {
@@ -129,6 +135,9 @@ export function onrampRoutes(context: AppContext): Router {
   });
 
   router.post("/v1/webhooks/fiat", async (request, response) => {
+    if (context.env.FIAT_GATEWAY !== 'mock' || context.gateway instanceof OnrampMoneyGateway) {
+      throw new HttpError(404, 'NOT_FOUND', 'Use the Onramp provider webhook endpoint.');
+    }
     const signature = request.get("x-fiat-signature");
     if (!signature || !/^[a-fA-F0-9]{64}$/.test(signature)) throw new HttpError(401, "BAD_WEBHOOK_SIGNATURE", "A 32-byte X-Fiat-Signature is required.");
     const result = await deliverWebhook(context, rawBodyOf(request), signature, request.body as unknown);

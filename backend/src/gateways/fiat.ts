@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Address } from "viem";
-import { NotConfigured } from "../chain/index.js";
+import type { BackendEnv } from "../env.js";
+import { OnrampMoneyGateway } from "./onramp.js";
+export { OnrampMoneyGateway } from "./onramp.js";
 
 export type OnrampOrder = { orderId: string; amountInrPaise: number };
 export type FiatWebhookEvent = {
@@ -45,22 +47,8 @@ export class MockGateway implements FiatGateway {
   }
 }
 
-export class OnrampMoneyGateway implements FiatGateway {
-  async createOnramp(_order: OnrampOrder): Promise<{ paymentUrl: string; status: "pending" }> {
-    throw new NotConfigured("OnrampMoneyGateway requires partner credentials and approved integration documentation.");
-  }
-
-  verifyWebhook(_rawBody: Buffer, _signature: string): boolean {
-    throw new NotConfigured("OnrampMoney webhook verification is not configured.");
-  }
-
-  async createPayout(_input: { payoutId: string; amountInrPaise: number; vpa: string }): Promise<GatewayPayout> {
-    throw new NotConfigured("OnrampMoney payouts are not configured.");
-  }
-}
-
-export function createFiatGateway(mode: "mock" | "onramp", secret: string): FiatGateway {
-  return mode === "mock" ? new MockGateway(secret) : new OnrampMoneyGateway();
+export function createFiatGateway(mode: "mock" | "onramp", secret: string, env?: BackendEnv): FiatGateway {
+  return mode === "mock" ? new MockGateway(secret) : new OnrampMoneyGateway(env);
 }
 
 export type PayoutRequest = {

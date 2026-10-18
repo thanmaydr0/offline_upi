@@ -1,15 +1,43 @@
 import { router } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useSessionStore } from '@/state/session';
-import { Button, Screen, StatusPill, typeScale, useAppTheme } from '@/ui';
+import { Banner, Button, Screen, StatusPill, typeScale, useAppTheme } from '@/ui';
+import { services, servicesMode } from '@/services';
+import { sessionStorage } from '@/api/storage';
+import { FetchApiClient } from '@/api/client';
+import { enableSync } from '@/sync/runtime';
 
 export default function OnboardingScreen() {
   const theme = useAppTheme();
   const completeOnboarding = useSessionStore((state) => state.completeOnboarding);
-  const getStarted = () => {
-    completeOnboarding();
-    router.replace('/(tabs)');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const locked = useRef(false);
+  useEffect(() => {
+    let active = true;
+    const restore = async () => {
+      if (!(services.api instanceof FetchApiClient)) return;
+      const token = await sessionStorage.getToken(await services.api.baseUrl());
+      const cachedConfig = await services.api.cachedConfig();
+      if (token && cachedConfig && active) { completeOnboarding(); enableSync(); router.replace('/(tabs)'); }
+    };
+    void restore().catch(() => undefined);
+    return () => { active = false; };
+  }, [completeOnboarding]);
+  const getStarted = async () => {
+    if (locked.current) return;
+    locked.current = true; setBusy(true); setError('');
+    try {
+      const { address } = await services.keys.init();
+      const integrity = await services.keys.integrity();
+      await services.api.register({ deviceAddress: address, deviceName: 'OfflinePay Android',
+        integrity: { rooted: integrity.rooted, isDevice: integrity.isDevice } });
+      await services.api.getConfig();
+      completeOnboarding(); enableSync(); router.replace('/(tabs)');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not register this device.'); }
+    finally { locked.current = false; setBusy(false); }
   };
 
   return (
@@ -39,8 +67,10 @@ export default function OnboardingScreen() {
       </View>
 
       <View style={styles.bottom}>
-        <Button title="Get started" fullWidth onPress={getStarted} />
-        <Text style={[styles.note, { color: theme.textMuted }]}>A simple demo with sample balances and payments.</Text>
+        {error ? <Banner title={error} tone="warning" /> : null}
+        <Button title="Get started" fullWidth loading={busy} onPress={getStarted} />
+        <Button title="Backend URL settings" variant="ghost" onPress={() => router.push('/(tabs)/settings')} />
+        <Text style={[styles.note, { color: theme.textMuted }]}>{servicesMode === 'mock' ? 'Sample balances and payments.' : 'Register this device online once, then keep cached vouchers offline.'}</Text>
       </View>
     </Screen>
   );

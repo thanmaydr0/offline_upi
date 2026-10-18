@@ -57,7 +57,7 @@
     "test": "jest --passWithNoTests",
     "lint": "eslint src",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "web": "expo start --web"
   },
   "private": true

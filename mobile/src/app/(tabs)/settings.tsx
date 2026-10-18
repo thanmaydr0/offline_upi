@@ -1,71 +1,54 @@
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Text, TextInput } from 'react-native';
 import { router } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
-
-import {
-  Banner,
-  Card,
-  ListRow,
-  NetworkBanner,
-  Screen,
-  ScreenHeader,
-  SectionDivider,
-  StatusPill,
-  useAppTheme,
-} from '@/ui';
+import Constants from 'expo-constants';
+import { services, servicesMode } from '@/services';
+import { localStore, sessionStorage, setApiUrl } from '@/api/storage';
+import { vpaSchema } from '@/api/schemas';
+import { resetLocalData } from '@/api/reset';
+import { disableSync, loadBalanceFlow, syncEngine } from '@/sync/runtime';
+import { z } from 'zod';
+import { Banner, Button, Card, Screen, ScreenHeader, useAppTheme } from '@/ui';
 
 export default function SettingsScreen() {
   const theme = useAppTheme();
-  return (
-    <Screen>
-      <ScreenHeader title="Settings" subtitle="Your account and app preferences." />
-      <NetworkBanner />
-
-      <Card style={styles.profileCard}>
-        <View style={[styles.avatar, { backgroundColor: theme.accentSoft }]}>
-          <Text style={[styles.avatarText, { color: theme.accent }]}>A</Text>
-        </View>
-        <View style={styles.profileCopy}>
-          <Text style={[styles.profileName, { color: theme.text }]}>Ananya Sharma</Text>
-          <Text style={[styles.profileDetail, { color: theme.textSecondary }]}>Personal account</Text>
-        </View>
-        <StatusPill label="Verified" tone="success" />
-      </Card>
-
-      <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>SECURITY & PRIVACY</Text>
-      <Card style={styles.groupCard}>
-        <ListRow icon="✓" title="Security status" subtitle="Review your device checks" onPress={() => router.push('/security')} />
-        <SectionDivider />
-        <ListRow icon="◉" title="Biometric approval" subtitle="Required for offline payments" trailing={<StatusPill label="On" tone="success" />} />
-        <SectionDivider />
-        <ListRow icon="⌁" title="Offline payments" subtitle="See payments waiting to sync" onPress={() => router.push('/pending')} />
-      </Card>
-
-      <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>YOUR ACCOUNT</Text>
-      <Card style={styles.groupCard}>
-        <ListRow icon="＋" title="Add money" subtitle="Move money into your offline balance" onPress={() => router.push('/load-balance')} />
-        <SectionDivider />
-        <ListRow icon="↻" title="Payment activity" subtitle="View all recent payments" onPress={() => router.push('/(tabs)/history')} />
-      </Card>
-
-      <Banner
-        icon="i"
-        title="OfflinePay demo"
-        detail="Payments and balances on this build use sample data."
-        tone="info"
-      />
-      <Text style={[styles.version, { color: theme.textMuted }]}>VERSION 1.0.0 · INDIA</Text>
-    </Screen>
-  );
+  const [url, setUrl] = useState('');
+  const [vpa, setVpa] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
+  useEffect(() => {
+    void sessionStorage.getOverride().then(value => setUrl(value ?? '')).catch(() => setMessage('Could not read API URL.'));
+    void localStore.read('vpa', z.string()).then(value => setVpa(value ?? '')).catch(() => undefined);
+  }, []);
+  const act = async (operation: () => Promise<void>) => {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setMessage('');
+    try { await operation(); } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save settings.'); }
+    finally { lock.current = false; setBusy(false); }
+  };
+  const reset = () => Alert.alert('Reset all local data?', 'This deletes your device identity, vouchers, receipts and history. Unsynced funds may be lost. Server records remain.', [
+    { text: 'Cancel', style: 'cancel' }, { text: 'Delete local data', style: 'destructive', onPress: () => { void act(async () => {
+      disableSync(); loadBalanceFlow.cancel(); await Promise.all([syncEngine.idle(), loadBalanceFlow.idle()]); await resetLocalData();
+    }); } },
+  ]);
+  const input = { color: theme.text, borderColor: theme.border, borderWidth: 1, padding: 14, borderRadius: 12 };
+  return <Screen><ScreenHeader title="Settings" subtitle={`Version ${Constants.expoConfig?.version ?? 'unknown'} · ${servicesMode}`} />
+    {message ? <Banner title={message} /> : null}
+    <Card><Text style={{ color: theme.text }}>Backend API URL override</Text>
+      <TextInput accessibilityLabel="API URL override" value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url"
+        placeholder={process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.1.10:3000'} placeholderTextColor={theme.textMuted} style={input} />
+      <Button title="Save API URL" loading={busy} onPress={() => { void act(async () => {
+        await Promise.all([syncEngine.idle(), loadBalanceFlow.idle()]);
+        await setApiUrl(url); setMessage('API URL saved. Blank uses the build environment URL.');
+      }); }} /></Card>
+    <Card><Text style={{ color: theme.text }}>Payee UPI VPA</Text>
+      <TextInput accessibilityLabel="Payee VPA" value={vpa} onChangeText={setVpa} autoCapitalize="none" autoCorrect={false} placeholder="name@bank" placeholderTextColor={theme.textMuted} style={input} />
+      <Button title="Save payout VPA" loading={busy} onPress={() => { void act(async () => {
+        const value = vpaSchema.parse(vpa); await services.api.setVpa(value); await localStore.write('vpa', value); setMessage('Payout VPA saved.');
+      }); }} /></Card>
+    <Button title="Security status" variant="secondary" onPress={() => router.push('/security')} />
+    <Button title="Back to onboarding" variant="ghost" onPress={() => router.replace('/onboarding')} />
+    <Button title="Reset local data" variant="danger" disabled={busy} onPress={reset} />
+  </Screen>;
 }
-
-const styles = StyleSheet.create({
-  profileCard: { flexDirection: 'row', alignItems: 'center', gap: 13, padding: 16 },
-  avatar: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 21, fontWeight: '800' },
-  profileCopy: { flex: 1, gap: 4 },
-  profileName: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
-  profileDetail: { fontSize: 12, lineHeight: 17 },
-  sectionLabel: { fontSize: 10, lineHeight: 14, letterSpacing: 1, fontWeight: '800', marginBottom: -10 },
-  groupCard: { paddingHorizontal: 16, paddingVertical: 5 },
-  version: { textAlign: 'center', fontSize: 10, lineHeight: 15, fontWeight: '700', letterSpacing: 1 },
-});

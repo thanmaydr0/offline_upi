@@ -8,6 +8,10 @@ export function kycRoutes(context: AppContext): Router {
   const authenticate = createAuthMiddleware(context.env, context.db);
 
   router.post("/v1/kyc/start", authenticate, (_request, response) => {
+    if (context.env.FIAT_GATEWAY === 'onramp') {
+      response.json({ status: 'provider_required' });
+      return;
+    }
     const auth = authFromResponse(response);
     const current = context.db.prepare("SELECT status, started_at, approved_at FROM kyc WHERE user_id = ?").get(auth.userId) as
       | { status: string; started_at: number; approved_at: number | null }
@@ -29,6 +33,10 @@ export function kycRoutes(context: AppContext): Router {
   });
 
   router.get("/v1/kyc/status", authenticate, (_request, response) => {
+    if (context.env.FIAT_GATEWAY === 'onramp') {
+      response.json({ status: 'provider_required' });
+      return;
+    }
     const auth = authFromResponse(response);
     const current = context.db.prepare("SELECT status, started_at, approved_at FROM kyc WHERE user_id = ?").get(auth.userId) as
       | { status: string; started_at: number; approved_at: number | null }

@@ -1,15 +1,17 @@
 import { mockServices } from './mock';
+import { keyService, voucherWallet, ledgerService, receivedStore } from '../core';
+import { FetchApiClient } from '../api/client';
+import { offlineFlows } from '../offline';
 
 type ServiceBundle = typeof mockServices;
 
 const useMocks = process.env.EXPO_PUBLIC_USE_MOCKS === '1';
 
-/*
- * TODO: wire the real KeyService and VoucherWallet from src/core, the ApiClient
- * from src/api, and OfflineFlows from src/offline as those sessions land.
- * Keep mocks as the safe development fallback until the complete bundle exists.
- */
-const realServices: ServiceBundle | undefined = undefined;
+const realServices: ServiceBundle = {
+  keys: keyService, wallet: voucherWallet, ledger: ledgerService, received: receivedStore,
+  api: new FetchApiClient({ keys: keyService }),
+  offline: offlineFlows,
+};
 
-export const services: ServiceBundle = useMocks ? mockServices : realServices ?? mockServices;
-export const servicesMode = useMocks || !realServices ? 'mock' : 'real';
+export const services: ServiceBundle = useMocks ? mockServices : realServices;
+export const servicesMode = useMocks ? 'mock' : 'real';

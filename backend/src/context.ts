@@ -5,6 +5,7 @@ import { createChainClient } from "./chain/index.js";
 import { createDatabase, type BackendDatabase } from "./db/database.js";
 import type { BackendEnv } from "./env.js";
 import { createFiatGateway, type FiatGateway } from "./gateways/fiat.js";
+import { RealChain } from './chain/real/index.js';
 
 export type AppContext = {
   env: BackendEnv;
@@ -26,11 +27,12 @@ export type AppOptions = {
 
 export function createContext(options: AppOptions): AppContext {
   const issuerAccount = privateKeyToAccount(options.env.ISSUER_PRIVATE_KEY as Hex);
-  const gateway = options.gateway ?? createFiatGateway(options.env.FIAT_GATEWAY, options.env.FIAT_WEBHOOK_SECRET);
+  const gateway = options.gateway ?? createFiatGateway(options.env.FIAT_GATEWAY, options.env.FIAT_WEBHOOK_SECRET, options.env);
+  const db = options.db ?? createDatabase(options.env.DB_PATH);
   return {
     env: options.env,
-    db: options.db ?? createDatabase(options.env.DB_PATH),
-    chain: options.chain ?? createChainClient(options.env, issuerAccount.address),
+    db,
+    chain: options.chain ?? (options.env.CHAIN_MODE === 'chain' ? new RealChain(options.env, db) : createChainClient(options.env, issuerAccount.address)),
     gateway,
     issuerAccount,
     issuerAddress: issuerAccount.address,

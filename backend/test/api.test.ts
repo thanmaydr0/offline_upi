@@ -224,8 +224,8 @@ describe("backend public and account routes", () => {
   });
 });
 
-describe("gateway skeleton behavior", () => {
-  it("does not invent Onramp.money integration URLs or accept unsupported setup", async () => {
+describe("live gateway configuration", () => {
+  it("blocks checkout without approved live setup and delegates KYC to the provider", async () => {
     const db = createDatabase(":memory:");
     const env = { ...testEnv, FIAT_GATEWAY: "onramp" as const };
     const issuerAddress = TEST_ISSUER_ADDRESS;
@@ -233,8 +233,8 @@ describe("gateway skeleton behavior", () => {
     const app = createApp({ env, db, chain, gateway: new OnrampMoneyGateway(), kycApprovalDelayMs: 100 });
     const registration = await request(app).post("/v1/devices/register").send(registrationBody()).expect(201);
     const bearer = { Authorization: `Bearer ${registration.body.token as string}` };
-    await request(app).post("/v1/kyc/start").set(bearer).expect(202);
-    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    await request(app).post("/v1/kyc/start").set(bearer).expect(200, { status: 'provider_required' });
+    expect(db.prepare('SELECT COUNT(*) FROM kyc').pluck().get()).toBe(0);
     await request(app).post("/v1/onramp/create").set(bearer).send({ amountInr: 100 }).expect(503)
       .expect(({ body }) => expect(body.error).toBe("NOT_CONFIGURED"));
     db.close();
