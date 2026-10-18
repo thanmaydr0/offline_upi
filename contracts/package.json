@@ -1,0 +1,9 @@
+{
+  "name": "@offline-pay/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc --noEmit", "compile": "hardhat compile", "test": "hardhat test" },
+  "devDependencies": { "@nomicfoundation/hardhat-toolbox-viem": "^5.0.0", "@types/node": "^24.0.0", "hardhat": "^3.0.0", "typescript": "^5.9.0" },
+  "dependencies": { "@openzeppelin/contracts": "^5.4.0", "dotenv": "^16.6.0" }
+}
