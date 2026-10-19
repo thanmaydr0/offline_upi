@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppState, Linking, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AppState, Linking, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import QRCode from 'react-native-qrcode-svg';
@@ -41,33 +41,80 @@ export function QrDisplay({ frames }: { frames: string[] }) {
 }
 export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<void> }) {
   const [permission, requestPermission] = useCameraPermissions();
+  const systemScannerAvailable = CameraView.isModernBarcodeScannerAvailable;
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
+  const [systemScannerOpen, setSystemScannerOpen] = useState(false);
   const [torch, setTorch] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [cameraReady, setCameraReady] = useState(false);
   const [scanStatus, setScanStatus] = useState('Starting camera…');
   const scanning = useRef(false);
   const lastScan = useRef(0);
+  const mounted = useRef(false);
+  const systemScannerPreferred = useRef(false);
+  const systemScanHandled = useRef(false);
   const onScanRef = useRef(onScan);
   useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => setActive(state === 'active'));
     return () => subscription.remove();
   }, []);
-  const handleBarcode = useCallback(({ data }: { data: string }) => {
-    if (scanning.current || Date.now() - lastScan.current < 350) return;
+  const handleBarcode = useCallback(({ data }: { data: string }): Promise<void> => {
+    if (scanning.current || Date.now() - lastScan.current < 350) return Promise.resolve();
     scanning.current = true;
     lastScan.current = Date.now();
     setScanStatus('QR detected. Checking it on this phone…');
-    void onScanRef.current(data)
+    return onScanRef.current(data)
       .catch(() => setCameraError('QR detected, but could not process it. Try a fresh OfflinePay QR.'))
       .finally(() => {
         scanning.current = false;
         setScanStatus('Camera ready. Hold the complete QR inside the frame.');
       });
   }, []);
+  useEffect(() => {
+    if (!systemScannerOpen || !permission?.granted || !focused || !systemScannerAvailable) return;
+    systemScanHandled.current = false;
+    let restart: ReturnType<typeof setTimeout> | undefined;
+    const subscription = CameraView.onModernBarcodeScanned(({ data }) => {
+      if (systemScanHandled.current) return;
+      systemScanHandled.current = true;
+      if (Platform.OS === 'ios') void CameraView.dismissScanner().catch(() => {});
+      void handleBarcode({ data }).finally(() => {
+        // The Android system scanner closes after every QR. Reopen it for the
+        // next proof frame while this scanner screen is still mounted.
+        if (mounted.current && systemScannerPreferred.current) {
+          restart = setTimeout(() => {
+            if (!mounted.current || !systemScannerPreferred.current) return;
+            systemScanHandled.current = false;
+            void CameraView.launchScanner({ barcodeTypes: ['qr'] }).catch((caught: unknown) => {
+              if (!mounted.current) return;
+              systemScannerPreferred.current = false;
+              setSystemScannerOpen(false);
+              setCameraError(caught instanceof Error ? `System QR scanner could not start: ${caught.message}` : 'System QR scanner could not start. Use the camera preview below.');
+              setScanStatus('Use the live camera preview to scan.');
+            });
+          }, 700);
+        }
+      });
+    });
+    const timer = setTimeout(() => {
+      void CameraView.launchScanner({ barcodeTypes: ['qr'] }).catch((caught: unknown) => {
+        if (!mounted.current) return;
+        systemScannerPreferred.current = false;
+        setSystemScannerOpen(false);
+        setCameraError(caught instanceof Error ? `System QR scanner could not start: ${caught.message}` : 'System QR scanner could not start. Use the camera preview below.');
+        setScanStatus('Use the live camera preview to scan.');
+      });
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      if (restart) clearTimeout(restart);
+      subscription.remove();
+    };
+  }, [focused, handleBarcode, permission?.granted, systemScannerAvailable, systemScannerOpen]);
   if (!permission) return <Message>Checking camera permission…</Message>;
   if (!permission.granted) return <>
     <Message>Allow camera access to scan QR codes offline.</Message>
@@ -78,15 +125,20 @@ export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<v
   </>;
   return <>
     <View style={styles.camera}>
-      {focused && active && <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={torch}
+      {focused && active && !systemScannerOpen && <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={torch}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onCameraReady={() => { setCameraReady(true); setCameraError(''); setScanStatus('Camera ready. Hold the complete QR inside the frame.'); }}
         onMountError={({ message }) => { setCameraReady(false); setCameraError(`Camera could not start: ${message}`); setScanStatus('Camera unavailable. Check app camera permission.'); }}
         onBarcodeScanned={handleBarcode} />}
+      {systemScannerOpen && <View style={styles.scannerNotice}><Message>Opening the system QR scanner…</Message></View>}
     </View>
-    <Button title={torch ? 'Torch off' : 'Torch on'} variant="secondary" onPress={() => setTorch((value) => !value)} />
+    {systemScannerAvailable ? <Button title={systemScannerOpen ? 'Use live camera preview instead' : 'Scan QR'} variant="secondary" onPress={() => {
+      systemScannerPreferred.current = !systemScannerOpen;
+      setSystemScannerOpen((value) => !value);
+      setCameraError('');
+    }} /> : <Button title={torch ? 'Torch off' : 'Torch on'} variant="secondary" onPress={() => setTorch((value) => !value)} />}
     {cameraError ? <Message>{cameraError}</Message> : null}
-    <Message>{cameraReady ? scanStatus : focused && active ? scanStatus : 'Camera paused while this screen is not active.'}</Message>
+    <Message>{systemScannerOpen ? 'The system scanner closes after each QR and reopens for the next proof frame.' : cameraReady ? scanStatus : focused && active ? scanStatus : 'Camera paused while this screen is not active.'}</Message>
     <Message>Only OfflinePay request and proof QR codes work here. Keep the full code visible and reduce glare.</Message>
   </>;
 }
@@ -97,5 +149,6 @@ const styles = StyleSheet.create({
   qrArea: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   qrWhite: { backgroundColor: '#FFFFFF', padding: 12 },
   camera: { flex: 1, minHeight: 180, maxHeight: 420, overflow: 'hidden', borderRadius: 18 },
+  scannerNotice: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111111' },
   controls: { flexDirection: 'row', gap: 12 },
 });
