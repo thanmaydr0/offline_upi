@@ -2,7 +2,7 @@
   "expo": {
     "name": "OfflinePay",
     "slug": "offline-pay",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "scheme": "offlinepay",
     "userInterfaceStyle": "automatic",
