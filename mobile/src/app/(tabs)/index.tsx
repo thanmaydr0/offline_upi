@@ -6,11 +6,13 @@ import { useBalanceStore } from '@/state/balances';
 import { useSync, enableSync, loadBalanceFlow } from '@/sync/runtime';
 import { ActivityRow, SyncNotice } from '@/sync/components';
 import { BalanceCard, Banner, Button, Screen, ScreenHeader, SectionTitle, useAppTheme } from '@/ui';
+import { formatOfflineInr } from '@/offline';
 
 export default function HomeScreen() {
   const theme = useAppTheme();
   const { snapshot } = useSync();
   const [offline, setOffline] = useState<bigint | null>(null);
+  const [receivedPending, setReceivedPending] = useState<bigint | null>(null);
   const onlinePaise = snapshot?.wallet.onlineInrPaise ?? 0n;
   const offlinePaise = offline ?? snapshot?.offlinePaise ?? 0n;
   const amountsFit = onlinePaise <= BigInt(Number.MAX_SAFE_INTEGER) && offlinePaise <= BigInt(Number.MAX_SAFE_INTEGER);
@@ -18,6 +20,9 @@ export default function HomeScreen() {
   const refreshOffline = useCallback(() => {
     let active = true;
     void services.wallet.offlineBalancePaise().then(value => { if (active) setOffline(value); }).catch(() => undefined);
+    void services.received.pending().then(items => {
+      if (active) setReceivedPending(items.reduce((sum, item) => sum + BigInt(item.voucher.inrPaise), 0n));
+    }).catch(() => undefined);
     void loadBalanceFlow.hydrate().catch(() => undefined);
     return () => { active = false; };
   }, []);
@@ -25,15 +30,16 @@ export default function HomeScreen() {
   useEffect(() => refreshOffline(), [snapshot, refreshOffline]);
   useEffect(() => {
     if (!snapshot) return;
-    const values = [snapshot.wallet.onlineInrPaise ?? 0n, snapshot.offlinePaise, snapshot.wallet.pendingSettlementPaise ?? 0n];
+    const values = [snapshot.wallet.onlineInrPaise ?? 0n, snapshot.offlinePaise, snapshot.wallet.pendingSettlementPaise ?? 0n, receivedPending ?? 0n];
     if (values.every(v => v <= BigInt(Number.MAX_SAFE_INTEGER))) useBalanceStore.getState().setBalances({
-      onlinePaise: Number(values[0]), offlinePaise: Number(values[1]), pendingSettlementPaise: Number(values[2]),
+      onlinePaise: Number(values[0]), offlinePaise: Number(values[1]), pendingSettlementPaise: Number(receivedPending ?? values[2]),
     });
-  }, [snapshot]);
+  }, [snapshot, receivedPending]);
   return <Screen>
     <ScreenHeader title="Your OfflinePay wallet" subtitle={servicesMode === 'real' ? 'Device-backed offline balance' : 'Mock services'} />
     <SyncNotice />
     {amountsFit ? <BalanceCard onlinePaise={Number(onlinePaise)} offlinePaise={Number(offlinePaise)} onPressOffline={() => router.push('/load-balance')} /> : <Banner title="Balance exceeds display range. Review security status." tone="warning" />}
+    {receivedPending !== null && receivedPending > 0n ? <Banner title={`Received offline: ${formatOfflineInr(receivedPending)}`} detail="Verified and saved on this phone. This credit is pending settlement and cannot be spent again until it settles." tone="success" /> : null}
     <Button title="Load Offline Balance" onPress={() => router.push('/load-balance')} />
     <View style={{ flexDirection: 'row', gap: 12 }}>
       <Button title="Pay" onPress={() => router.push('/pay')} />

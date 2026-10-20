@@ -93,9 +93,18 @@ describe("backend public and account routes", () => {
       types: PAYMENT_TYPES, primaryType: 'Payment', message: payment,
     });
     const payload = { items: [{ ...item, payment: { ...payment, usdcAmount: payment.usdcAmount.toString(), deadline: payment.deadline.toString() }, deviceSig }] };
+    const redeem = vi.spyOn(context.chain, 'redeemBatch').mockRejectedValueOnce(new Error('chain unavailable'));
+    await request(context.app).post('/v1/settle').set(bearer).send(payload).expect(500);
+    await request(context.app).get('/v1/wallet').set(bearer).expect(200)
+      .expect(({ body }) => expect(body.pendingSettlementPaise).toBe(item.voucher.inrPaise));
+    expect(context.db.prepare('SELECT status FROM received_items WHERE lower(voucher_id) = ? AND payee_device_id = (SELECT id FROM devices WHERE address = ?)')
+      .get(item.voucher.voucherId.toLowerCase(), '0x0000000000000000000000000000000000000114')).toEqual({ status: 'pending' });
+    redeem.mockRestore();
     const payout = vi.spyOn(context.gateway, 'createPayout').mockRejectedValueOnce(new Error('Provider temporarily unavailable'));
     const settled = await request(context.app).post('/v1/settle').set(bearer).send(payload).expect(200);
     expect(settled.body.results).toEqual([{ voucherId: item.voucher.voucherId, status: 0 }]);
+    expect(context.db.prepare('SELECT status FROM received_items WHERE lower(voucher_id) = ? AND payee_device_id = (SELECT id FROM devices WHERE address = ?)')
+      .get(item.voucher.voucherId.toLowerCase(), '0x0000000000000000000000000000000000000114')).toEqual({ status: 'settled' });
     await request(context.app).get(`/v1/settle/${settled.body.settlementId}`).set(bearer).expect(200);
     await request(context.app).get('/v1/payouts').set(bearer).expect(200)
       .expect(({ body }) => expect(body.payouts[0].status).toBe('pending'));

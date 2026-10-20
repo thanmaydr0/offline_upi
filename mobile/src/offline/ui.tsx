@@ -48,6 +48,7 @@ export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<v
   const [cameraReady, setCameraReady] = useState(false);
   const [scanStatus, setScanStatus] = useState('Starting camera…');
   const [scanEnabled, setScanEnabled] = useState(false);
+  const scanArmed = useRef(false);
   const scanning = useRef(false);
   const lastScannedData = useRef<string | null>(null);
   const onScanRef = useRef(onScan);
@@ -58,7 +59,7 @@ export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<v
     return () => subscription.remove();
   }, []);
   const handleBarcode = useCallback(({ data }: { data: string }): Promise<void> => {
-    if (!data || scanning.current || lastScannedData.current === data) return Promise.resolve();
+    if (!scanArmed.current || !data || scanning.current || lastScannedData.current === data) return Promise.resolve();
     scanning.current = true;
     lastScannedData.current = data;
     setScanStatus('QR detected. Checking it on this phone…');
@@ -77,16 +78,20 @@ export function OfflineScanner({ onScan }: { onScan: (data: string) => Promise<v
     }} />
     {cameraError ? <Message>{cameraError}</Message> : null}
   </>;
+  // Keep the native callback attached from mount: Expo Camera installs Android's
+  // ImageAnalysis analyzer when CameraX first binds. Adding this prop after
+  // camera-ready does not reliably install that analyzer on the running session.
   return <>
     <View style={styles.camera}>
       {focused && active && <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={torch}
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onCameraReady={() => { setCameraReady(true); setCameraError(''); setScanStatus(scanEnabled ? 'Scanning… Hold the complete QR inside the frame.' : 'Camera ready. Tap Scan QR to begin.'); }}
         onMountError={({ message }) => { setCameraReady(false); setCameraError(`Camera could not start: ${message}`); setScanStatus('Camera unavailable. Check app camera permission.'); }}
-        onBarcodeScanned={scanEnabled ? handleBarcode : undefined} />}
+        onBarcodeScanned={handleBarcode} />}
     </View>
     <View style={styles.controls}>
       <Button title={scanEnabled ? 'Scan another QR' : 'Scan QR'} variant="secondary" disabled={!cameraReady} onPress={() => {
+        scanArmed.current = true;
         setScanEnabled(true);
         lastScannedData.current = null;
         setCameraError('');

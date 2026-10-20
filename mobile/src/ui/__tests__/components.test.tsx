@@ -7,6 +7,7 @@ import { useBalanceStore } from '@/state/balances';
 import { AmountKeypad, BalanceCard } from '../primitives';
 
 let mockOfflineBalance = 88_000n;
+let mockReceivedItems: { voucher: { inrPaise: number } }[] = [];
 const mockSyncState = { running: false, error: null, snapshot: {
   wallet: { onlineInrPaise: 4_623_800n, pendingSettlementPaise: 0n }, offlinePaise: 88_000n,
   history: [{ id: 'one', type: 'onramp', amountInrPaise: 10000, status: 'funded' }], lastSync: 1,
@@ -17,6 +18,11 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('@/services', () => ({ servicesMode: 'real', services: {
   wallet: { offlineBalancePaise: async () => mockOfflineBalance },
+  received: { pending: async () => mockReceivedItems },
+} }));
+jest.mock('@/offline', () => ({ formatOfflineInr: (amount: bigint) => {
+  const value = BigInt(amount);
+  return `₹${(value / 100n).toString()}.${(value % 100n).toString().padStart(2, '0')}`;
 } }));
 jest.mock('@/sync/runtime', () => ({
   useSync: () => mockSyncState, enableSync: jest.fn(),
@@ -59,6 +65,7 @@ describe('BalanceCard', () => {
 describe('Home screen', () => {
   beforeEach(() => {
     mockOfflineBalance = 88_000n;
+    mockReceivedItems = [];
     useBalanceStore.setState({ onlinePaise: 4_623_800, offlinePaise: 88_000 });
   });
 
@@ -78,5 +85,13 @@ describe('Home screen', () => {
     const { getByTestId } = await render(<HomeScreen />);
     expect(getByTestId('balance-offline').props.children).toBe('₹0');
     expect(getByTestId('balance-total').props.children).toBe('₹46,238');
+  });
+
+  it('shows an offline received credit locally without counting it as spendable balance', async () => {
+    mockReceivedItems = [{ voucher: { inrPaise: 12_345 } }];
+    const { findByText, getByTestId } = await render(<HomeScreen />);
+
+    expect(await findByText('Received offline: ₹123.45')).toBeTruthy();
+    expect(getByTestId('balance-total').props.children).toBe('₹47,118');
   });
 });

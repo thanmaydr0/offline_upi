@@ -67,6 +67,12 @@ export class SettlementService {
       for (const [id, item] of unique) {
         const prior = db.prepare('SELECT * FROM settlement_proofs WHERE voucher_id = ? AND payee_id = ? AND deadline = ?').get(id, auth.deviceId, item.payment.deadline.toString()) as Stored | undefined;
         if (prior && prior.proof !== stringify(item)) throw new HttpError(409, 'PROOF_CHANGED', 'An idempotent retry must contain the same proof.');
+        const receivedItem = db.prepare('SELECT id FROM received_items WHERE lower(voucher_id) = ? AND payee_device_id = ?').get(id, auth.deviceId) as { id: string } | undefined;
+        if (!receivedItem) {
+          const receivedStatus = prior?.status === 0 ? 'settled' : prior?.status != null ? 'rejected' : 'pending';
+          db.prepare('INSERT INTO received_items (id, payee_device_id, voucher_id, payer_device_address, inr_paise, proof_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(randomUUID(), auth.deviceId, id, item.voucher.device.toLowerCase(), item.voucher.inrPaise, stringify(item), receivedStatus, Math.floor(Date.now() / 1000));
+        }
         if (prior?.status !== null && prior?.status !== undefined) {
           results.push({ voucherId: id, status: prior.status as RedeemResult['status'] });
           await this.payout(prior);
@@ -122,8 +128,10 @@ export class SettlementService {
     if (payer && !db.prepare('SELECT id FROM settlement_items WHERE id = ?').get(row.id)) db.prepare('INSERT INTO settlement_items VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(row.id, row.settlement_id, row.voucher_id, payer.id, row.payee_id, item.voucher.inrPaise, status, Math.floor(Date.now()/1000));
     if (status === 0) {
       db.prepare("UPDATE vouchers SET status = 'settled' WHERE lower(voucher_id) = ?").run(row.voucher_id);
-      db.prepare("UPDATE received_items SET status = 'settled' WHERE lower(voucher_id) = ? AND payee_device_id = ?").run(row.voucher_id, row.payee_id);
+      db.prepare("UPDATE received_items SET status = 'settled' WHERE lower(voucher_id) = ? AND payee_device_id = ? AND status = 'pending'").run(row.voucher_id, row.payee_id);
       await this.payout(row);
+    } else {
+      db.prepare("UPDATE received_items SET status = 'rejected' WHERE lower(voucher_id) = ? AND payee_device_id = ? AND status = 'pending'").run(row.voucher_id, row.payee_id);
     }
   }
   async payout(row: Stored): Promise<void> {
