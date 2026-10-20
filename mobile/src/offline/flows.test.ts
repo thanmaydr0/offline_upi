@@ -268,6 +268,25 @@ describe('hostile input and cached risk policy', () => {
     const receiver = await instance(payee); const request = await receiver.flow.createRequest(100);
     expect(await new OfflineFlowController(receiver.deps).getOpenRequest()).toEqual(request);
   });
+  test('restores the same spent proof after restart without spending again', async () => {
+    const { sender, request, frames } = await transaction([100]);
+    const restarted = new OfflineFlowController(sender.deps);
+    expect(await restarted.getOutgoingPayment()).toMatchObject({ request, frames, ready: true });
+    expect(sender.deps.wallet.markSpent).toHaveBeenCalledTimes(1);
+    await restarted.acknowledgeOutgoing(request.reqId);
+    expect(await restarted.getOutgoingPayment()).toBeNull();
+    await expect(restarted.payRequest(request)).rejects.toThrow('second proof');
+  });
+  test('recovers proof after a committed spend followed by interrupted ledger persistence', async () => {
+    const sender = await instance(payer, [100]); const receiver = await instance(payee);
+    const request = await receiver.flow.createRequest(100);
+    sender.deps.ledger.append = async () => { throw new Error('interrupted'); };
+    await expect(sender.flow.payRequest(request)).rejects.toThrow('interrupted');
+    const pending = await new OfflineFlowController(sender.deps).getOutgoingPayment();
+    expect(pending).not.toBeNull();
+    expect(await receive(receiver.flow, pending!.frames)).toMatchObject({ ok: true });
+    expect(sender.deps.wallet.markSpent).toHaveBeenCalledTimes(1);
+  });
   test('formats paise exactly as INR without floating point', () => {
     expect(formatOfflineInr(105n)).toBe('₹1.05'); expect(formatOfflineInr(200_000)).toBe('₹2,000.00');
   });

@@ -24,6 +24,8 @@ export interface LedgerService {
 
 export interface ReceivedStore {
   addVerified(proof: PaymentProof): Promise<void>;
+  /** Exact, durable receipt used to acknowledge a retry without crediting twice. */
+  findVerified?(reqId: Hex): Promise<PaymentProof | null>;
   pending(): Promise<ProofItem[]>;
   markSettled(voucherId: Hex, status: number): Promise<void>;
   seenVoucher(id: Hex): Promise<boolean>;

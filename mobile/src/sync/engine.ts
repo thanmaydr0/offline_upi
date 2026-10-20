@@ -31,7 +31,8 @@ export class SyncEngine {
   private async perform() {
     this.update({ running: true, error: null });
     try {
-      await this.deps.api.getConfig();
+      const config = await this.deps.api.getConfig();
+      const { limits } = z.object({ limits: z.object({ maxSingleOfflinePaymentPaise: z.number().int().positive().safe().default(200_000) }).default({ maxSingleOfflinePaymentPaise: 200_000 }) }).parse(config);
       const head = await this.deps.ledger.head();
       const witness = await this.deps.api.postLedgerHead(head);
       if (!witness.ok || witness.flagged) throw new Error('Server flagged this ledger. Offline payments are blocked.');
@@ -41,8 +42,15 @@ export class SyncEngine {
       if (journal) await this.applyResults(journal.results);
       const pending = await this.deps.received.pending();
       // Bound each batch below the backend's JSON body limit, while draining every queued proof.
-      for (let offset = 0; offset < pending.length; offset += 16) {
-        const batch = pending.slice(offset, offset + 16);
+      for (let offset = 0; offset < pending.length;) {
+        const batch: typeof pending = [];
+        let totalPaise = 0n;
+        while (offset < pending.length && batch.length < 16) {
+          const item = pending[offset];
+          const amount = BigInt(item.voucher.inrPaise);
+          if (batch.length && totalPaise + amount > BigInt(limits.maxSingleOfflinePaymentPaise)) break;
+          batch.push(item); totalPaise += amount; offset++;
+        }
         // Backend redemption is idempotent by voucherId; persist the entire response before local acknowledgement.
         // Never turn a partial/malformed response into a successful settlement.
         const response = settlementSchema.parse(await this.deps.api.settle(batch));

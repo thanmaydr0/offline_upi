@@ -13,7 +13,7 @@ module.exports = {
   projects: [
     { ...nodeProject, displayName: 'core', testMatch: ['<rootDir>/__tests__/core/**/*.test.ts'] },
     { ...nodeProject, displayName: 'api-sync', testMatch: ['<rootDir>/src/api/**/*.test.ts', '<rootDir>/src/sync/**/*.test.ts'] },
-    { ...nodeProject, displayName: 'offline', testMatch: ['<rootDir>/src/offline/**/*.test.ts'] },
+    { ...nodeProject, displayName: 'offline', testMatch: ['<rootDir>/src/offline/**/*.test.ts', '<rootDir>/src/transport/**/*.test.ts'] },
     { displayName: 'ui', preset: 'jest-expo', testMatch: ['<rootDir>/src/ui/**/*.test.tsx'],
       moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1', '^@offline-pay/shared$': '<rootDir>/../shared/src/index.ts' } },
   ],

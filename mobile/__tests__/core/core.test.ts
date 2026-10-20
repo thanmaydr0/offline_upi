@@ -365,8 +365,17 @@ describe("offline core services", () => {
     const pending = await receiverStore.pending();
     const persisted = parsePaymentProof({ v: 1, reqId: request.reqId, items: pending });
     expect(persisted.reqId).toBe(request.reqId);
+    await expect(new SqliteReceivedStore().findVerified(request.reqId)).resolves.toEqual(persisted);
+    // A dropped Bluetooth acknowledgement must return the same durable receipt,
+    // without inserting a second credit, even after the request has closed.
+    for (const frame of frames) result = await receiver.receiveFrame(frame);
+    expect(result).toMatchObject({ ok: true, totalInrPaise: 100n });
+    await expect(receiverStore.pending()).resolves.toHaveLength(1);
     await expect(receiverStore.seenVoucher(voucher.voucherId)).resolves.toBe(true);
     await receiverStore.markSettled(voucher.voucherId, 0);
+    await expect(receiverStore.pending()).resolves.toHaveLength(0);
+    for (const frame of frames) result = await receiver.receiveFrame(frame);
+    expect(result).toMatchObject({ ok: true, totalInrPaise: 100n });
     await expect(receiverStore.pending()).resolves.toHaveLength(0);
     await expect(receiverStore.addVerified(persisted)).rejects.toBeInstanceOf(Error);
   });

@@ -46,4 +46,15 @@ describe('sync idempotency and recovery', () => {
     expect(deps.api.settle.mock.calls.map(([items]) => items.length)).toEqual([16, 16, 2]);
     expect(deps.pending.size).toBe(0); expect(engine.getState().error).toBeNull();
   });
+  test('splits accumulated offline receipts below the backend amount cap on reconnection', async () => {
+    const deps = fixture();
+    deps.api.getConfig.mockResolvedValue({ limits: { maxSingleOfflinePaymentPaise: 200000 } });
+    for (let index = 1; index <= 3; index++) {
+      const voucherId = `0x${index.toString(16).padStart(64, '0')}` as Hex;
+      deps.pending.set(voucherId, { ...proof, voucher: { ...proof.voucher, inrPaise: 150000, voucherId }, payment: { ...proof.payment, voucherId } });
+    }
+    const engine = new SyncEngine(deps); await engine.run();
+    expect(deps.api.settle.mock.calls.map(([items]) => items.length)).toEqual([1, 1, 1]);
+    expect(deps.pending.size).toBe(0); expect(engine.getState().error).toBeNull();
+  });
 });

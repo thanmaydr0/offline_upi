@@ -34,7 +34,7 @@
         "expo-camera",
         {
           "cameraPermission": "Allow OfflinePay to scan payment QR codes.",
-          "barcodeScannerEnabled": true
+          "barcodeScannerEnabled": false
         }
       ],
       "expo-web-browser",

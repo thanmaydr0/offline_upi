@@ -58,8 +58,8 @@ export class SettlementService {
         if (total > BigInt(env.MAX_SINGLE_OFFLINE_PAYMENT_PAISE)) throw new HttpError(400, 'PAYMENT_LIMIT', 'Settlement exceeds per-payment cap.');
         unique.set(id, item);
       }
-      const payee = db.prepare('SELECT payee_vpa FROM devices WHERE id = ?').get(auth.deviceId) as { payee_vpa: string | null };
-      if (!payee.payee_vpa) throw new HttpError(409, 'VPA_REQUIRED', 'Set a payout VPA before settlement.');
+      // Offline receipt verification/redemption is independent of payout setup.
+      // payout() safely waits for a VPA and recover() submits it after one is saved.
       const settlementId = randomUUID();
       db.prepare('INSERT INTO settlement_requests VALUES (?, ?, ?)').run(settlementId, auth.deviceId, Math.floor(Date.now()/1000));
       const results: RedeemResult[] = [];

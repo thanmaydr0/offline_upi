@@ -35,10 +35,16 @@ export const loadBalanceFlow = new LoadBalanceFlow({ ...services, store: localSt
 });
 let started = false;
 let enabled = false;
+function syncWhenConnected() {
+  if (!enabled || AppState.currentState !== 'active') return;
+  void Network.getNetworkStateAsync().then(state => {
+    if (enabled && AppState.currentState === 'active' && state.isConnected === true) void syncEngine.run();
+  }).catch(() => undefined);
+}
 export function startSync() {
   if (started) return;
   started = true;
-  const run = () => { if (enabled && AppState.currentState === 'active') void syncEngine.run(); };
+  const run = syncWhenConnected;
   AppState.addEventListener('change', state => { if (state === 'active') run(); });
   let connected = false;
   Network.addNetworkStateListener(state => {
@@ -51,7 +57,7 @@ export function startSync() {
   void loadBalanceFlow.hydrate().catch(() => undefined);
   void Network.getNetworkStateAsync().then(state => { connected = state.isConnected === true; if (connected) run(); }).catch(() => undefined);
 }
-export function enableSync() { enabled = true; startSync(); void syncEngine.run(); }
+export function enableSync() { enabled = true; startSync(); syncWhenConnected(); }
 export function disableSync() { enabled = false; }
 export function useSync() {
   useEffect(() => { startSync(); }, []);

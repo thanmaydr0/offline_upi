@@ -84,7 +84,6 @@ describe("backend public and account routes", () => {
     const item = issued.body.vouchers[0] as { voucher: { voucherId: `0x${string}`; device: Address; usdcAmount: string; inrPaise: number; expiry: string }; issuerSig: `0x${string}` };
     const payee = await registerDevice(context.app, '0x0000000000000000000000000000000000000114');
     const bearer = { Authorization: `Bearer ${payee.token}` };
-    await request(context.app).post('/v1/payee/vpa').set(bearer).send({ vpa: 'receiver@testbank' }).expect(200);
     const payment = { voucherId: item.voucher.voucherId, device: item.voucher.device,
       payee: '0x0000000000000000000000000000000000000114' as Address,
       usdcAmount: BigInt(item.voucher.usdcAmount), deadline: BigInt(item.voucher.expiry) };
@@ -105,6 +104,12 @@ describe("backend public and account routes", () => {
     expect(settled.body.results).toEqual([{ voucherId: item.voucher.voucherId, status: 0 }]);
     expect(context.db.prepare('SELECT status FROM received_items WHERE lower(voucher_id) = ? AND payee_device_id = (SELECT id FROM devices WHERE address = ?)')
       .get(item.voucher.voucherId.toLowerCase(), '0x0000000000000000000000000000000000000114')).toEqual({ status: 'settled' });
+    expect(payout).not.toHaveBeenCalled();
+    await request(context.app).get('/v1/payouts').set(bearer).expect(200)
+      .expect(({ body }) => expect(body.payouts).toHaveLength(0));
+    // Recording an offline transfer is independent of configuring a fiat payout.
+    await request(context.app).post('/v1/payee/vpa').set(bearer).send({ vpa: 'receiver@testbank' }).expect(200);
+    await context.job.run();
     await request(context.app).get(`/v1/settle/${settled.body.settlementId}`).set(bearer).expect(200);
     await request(context.app).get('/v1/payouts').set(bearer).expect(200)
       .expect(({ body }) => expect(body.payouts[0].status).toBe('pending'));

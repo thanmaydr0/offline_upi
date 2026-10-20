@@ -8,7 +8,7 @@ import { receivedStore } from '../core/received';
 import { voucherWallet } from '../core/wallet';
 import { OfflineFlowController, type FlowStorage } from './flows';
 
-const storage: FlowStorage = {
+export const offlineFlowStorage: FlowStorage = {
   get: (key) => withCoreDatabase(async (db) => {
     const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM core_meta WHERE key = ?', `p7:${key}`);
     return row ? JSON.parse(row.value) as unknown : null;
@@ -21,7 +21,7 @@ const storage: FlowStorage = {
 
 /** Real local-only implementation. This module never imports ApiClient or services wiring. */
 export const offlineFlows = new OfflineFlowController({
-  keys: keyService, wallet: voucherWallet, ledger: ledgerService, received: receivedStore, storage,
+  keys: keyService, wallet: voucherWallet, ledger: ledgerService, received: receivedStore, storage: offlineFlowStorage,
   cachedConfig: readCachedServerConfig,
   nowSeconds: async () => Number(await conservativeNowSeconds()),
   randomBytes: Crypto.getRandomBytesAsync,

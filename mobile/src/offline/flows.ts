@@ -30,6 +30,8 @@ export const configSchema = z.object({
 const openSchema = z.object({ request: requestSchema, expiresAt: z.number().int().safe() }).strict();
 const paidSchema = z.object({ reqId, state: z.literal('committed') }).strict();
 const boundedProofSchema = paymentProofSchema.extend({ items: paymentProofSchema.shape.items.max(128) });
+const outgoingSchema = z.object({ request: requestSchema, frames: z.array(z.string().max(MAX_FRAME_CHARS)).min(1).max(MAX_FRAMES),
+  voucherIds: z.array(z.string()), ready: z.boolean() });
 
 export interface FlowStorage {
   get(key: string): Promise<unknown | null>;
@@ -133,9 +135,32 @@ export class OfflineFlowController implements OfflineFlows {
     return open.request;
   }
 
+  /** Never sign or spend again just because the Bluetooth acknowledgement was lost. */
+  async getOutgoingPayment() {
+    const raw = await this.deps.storage.get('outgoing');
+    if (raw === null) return null;
+    const outgoing = outgoingSchema.parse(raw);
+    if (!outgoing.ready) {
+      const available = new Set((await this.deps.wallet.list()).map(item => item.voucher.voucherId.toLowerCase()));
+      if (outgoing.voucherIds.some(id => available.has(id.toLowerCase()))) return null;
+      // The spend transaction removed every selected voucher before interruption.
+      outgoing.ready = true;
+      await this.deps.storage.set('outgoing', outgoing);
+    }
+    return outgoing;
+  }
+
+  async acknowledgeOutgoing(reqId: string): Promise<void> {
+    const outgoing = await this.getOutgoingPayment();
+    if (!outgoing) return;
+    if (outgoing.request.reqId !== reqId) throw new Error('Payment acknowledgement does not match the pending payment.');
+    await this.deps.storage.set('outgoing', null);
+  }
+
   payRequest(input: PaymentRequest): Promise<string[]> {
     return this.exclusive(async () => {
       const { request, config, me, now } = await this.validateRequest(input);
+      if (await this.getOutgoingPayment()) throw new Error('Deliver the pending payment before making another payment.');
       let selected;
       try { selected = await this.deps.wallet.selectForAmount(request.inrPaise); }
       catch (error) {
@@ -173,12 +198,15 @@ export class OfflineFlowController implements OfflineFlows {
       // Fail closed across restarts and partial failures: never regenerate a committed request.
       this.blockedRequests.add(request.reqId);
       await this.deps.storage.set(`paid:${request.reqId}`, paidSchema.parse({ reqId: request.reqId, state: 'committed' }));
+      const outgoing = { request, frames, voucherIds: selected.map(item => item.voucher.voucherId), ready: false };
+      await this.deps.storage.set('outgoing', outgoing);
       await this.deps.wallet.markSpent(selected.map((item) => item.voucher.voucherId), request.reqId);
       if (!this.deps.walletAppendsSpendLedger) {
         const entry = { kind: 'offline_spend', reqId: request.reqId,
           voucherIds: selected.map((item) => item.voucher.voucherId), inrPaise: request.inrPaise, spentAtMs: now * 1000 };
         await this.deps.ledger.append(entry);
       }
+      await this.deps.storage.set('outgoing', { ...outgoing, ready: true });
       return frames;
     });
   }
@@ -194,11 +222,6 @@ export class OfflineFlowController implements OfflineFlows {
   receiveFrame(input: string): Promise<VerifyResult | { progress: number }> {
     return this.exclusive(async () => {
       try {
-        const { config, me, now } = await this.context();
-        const stored = await this.deps.storage.get('open');
-        if (stored === null) throw new Error('No open request. Create a new QR.');
-        const { request, expiresAt } = openSchema.parse(stored);
-        if (now >= expiresAt || now >= request.ts + REQUEST_TTL_SECONDS) throw new Error('Request expired. Create a new QR.');
         const frame = z.string().min(7).max(MAX_FRAME_CHARS).parse(input);
         if (!frame.startsWith('OPAY1:')) throw new Error('Not an OfflinePay QR.');
         const match = /^OPAY1:([1-9]\d{0,2})\/([1-9]\d{0,2}):([A-Za-z0-9_-]+)$/.exec(frame);
@@ -218,6 +241,17 @@ export class OfflineFlowController implements OfflineFlows {
           if (this.frames.size) throw new Error('Cannot mix a complete QR and proof frames. Restart scanning.');
         }
         const proof = boundedProofSchema.parse(decodePayload<unknown>(encoded));
+        const prior = await this.deps.received.findVerified?.(proof.reqId);
+        if (prior && encodePayload(prior) === encoded) {
+          this.resetFrames();
+          // Receipt replay confirms persistence, not a fresh low-risk assessment.
+          return { ok: true, risk: 'high', totalInrPaise: prior.items.reduce((sum, item) => sum + BigInt(item.voucher.inrPaise), 0n) };
+        }
+        const { config, me, now } = await this.context();
+        const stored = await this.deps.storage.get('open');
+        if (stored === null) throw new Error('No open request. Create a new QR.');
+        const { request, expiresAt } = openSchema.parse(stored);
+        if (now >= expiresAt || now >= request.ts + REQUEST_TTL_SECONDS) throw new Error('Request expired. Create a new QR.');
         const seenVoucherIds = new Set<string>();
         for (const item of proof.items) {
           if (await this.deps.received.seenVoucher(item.voucher.voucherId)) seenVoucherIds.add(item.voucher.voucherId.toLowerCase());

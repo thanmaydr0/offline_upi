@@ -33,7 +33,22 @@ export class SqliteReceivedStore implements ReceivedStoreInterface {
             Date.now(),
           );
         }
+        // Commit the original proof with its credits, so an interrupted Bluetooth
+        // acknowledgement can be retried even after restart or online settlement.
+        await database.runAsync(
+          'INSERT INTO core_meta(key, value) VALUES(?, ?)',
+          `received-proof:${validated.reqId.toLowerCase()}`,
+          stringifyJson(validated),
+        );
       });
+    });
+  }
+
+  async findVerified(reqId: Hex): Promise<PaymentProof | null> {
+    const id = z.string().regex(/^0x[0-9a-fA-F]{32}$/).parse(reqId).toLowerCase();
+    return withCoreDatabase(async database => {
+      const row = await database.getFirstAsync<{ value: string }>('SELECT value FROM core_meta WHERE key = ?', `received-proof:${id}`);
+      return row ? parsePaymentProof(parseJson<unknown>(row.value)) : null;
     });
   }
 

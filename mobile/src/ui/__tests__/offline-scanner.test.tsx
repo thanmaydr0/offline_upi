@@ -1,55 +1,45 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { describe, expect, jest, test } from '@jest/globals';
+import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { OfflineScanner } from '../../offline/ui';
+import { scanOfflineQr } from '../../transport/native';
 
 jest.mock('expo-router', () => ({
-  useFocusEffect: (callback: () => void | (() => void)) => {
+  useFocusEffect: (callback: () => void) => {
     const React = jest.requireActual<typeof import('react')>('react');
     React.useEffect(callback, [callback]);
   },
 }));
-
-jest.mock('expo-camera', () => {
-  const React = jest.requireActual<typeof import('react')>('react');
-  const { Pressable, Text } = jest.requireActual<typeof import('react-native')>('react-native');
-  const sampleQr = 'OPAY1:sample-offline-request';
-  return {
-    CameraView: ({ onCameraReady, onBarcodeScanned }: {
-      onCameraReady?: () => void;
-      onBarcodeScanned?: (result: { data: string }) => void;
-    }) => {
-      React.useEffect(() => { onCameraReady?.(); }, [onCameraReady]);
-      return <Pressable testID="camera-qr-event" onPress={() => onBarcodeScanned?.({ data: sampleQr })}>
-        <Text>Fake camera</Text>
-      </Pressable>;
-    },
-    useCameraPermissions: () => [{ granted: true }, jest.fn()],
-  };
-});
-
+jest.mock('../../transport/native', () => ({ scanOfflineQr: jest.fn() }));
 jest.mock('../../ui', () => {
   const React = jest.requireActual<typeof import('react')>('react');
   const { Pressable, Text } = jest.requireActual<typeof import('react-native')>('react-native');
   return {
-    Button: ({ title, onPress, disabled }: { title: string; onPress: () => void; disabled?: boolean }) =>
-      <Pressable accessibilityRole="button" accessibilityState={{ disabled: Boolean(disabled) }} disabled={disabled} onPress={onPress}>
-        <Text>{title}</Text>
-      </Pressable>,
+    Button: ({ title, onPress, loading }: { title: string; onPress: () => void; loading?: boolean }) =>
+      <Pressable accessibilityRole="button" disabled={loading} onPress={onPress}><Text>{title}</Text></Pressable>,
     useAppTheme: () => ({ text: '#111111' }),
   };
 });
-
+const scan = jest.mocked(scanOfflineQr);
+beforeEach(() => { scan.mockReset(); });
 describe('OfflineScanner', () => {
-  test('registers the native scanner at camera mount and only handles scans after Scan QR is tapped', async () => {
+  test('automatically opens the bundled native QR scanner and forwards decoded data', async () => {
+    scan.mockResolvedValue('OPAYBT1:offline-request');
     const onScan = jest.fn(async (_data: string) => undefined);
-    const { getByText, getByTestId } = await render(<OfflineScanner onScan={onScan} />);
-
-    await waitFor(() => expect(getByText('Scan QR')).toBeTruthy());
-    fireEvent.press(getByTestId('camera-qr-event'));
+    await render(<OfflineScanner onScan={onScan} />);
+    await waitFor(() => expect(onScan).toHaveBeenCalledWith('OPAYBT1:offline-request'));
+    expect(scan).toHaveBeenCalledTimes(1);
+  });
+  test('cancellation does not submit a payment and Scan QR allows retry', async () => {
+    scan.mockResolvedValueOnce(null).mockResolvedValueOnce('OPAYBT1:retry');
+    const onScan = jest.fn(async (_data: string) => undefined);
+    const { getByText } = await render(<OfflineScanner onScan={onScan} />);
     expect(onScan).not.toHaveBeenCalled();
-
-    fireEvent.press(getByText('Scan QR'));
-    fireEvent.press(getByTestId('camera-qr-event'));
-    await waitFor(() => expect(onScan).toHaveBeenCalledWith('OPAY1:sample-offline-request'));
+    await fireEvent.press(getByText('Scan QR'));
+    await waitFor(() => expect(onScan).toHaveBeenCalledWith('OPAYBT1:retry'));
+  });
+  test('shows permission/native errors instead of leaving an inert camera preview', async () => {
+    scan.mockRejectedValue(new Error('Camera permission denied'));
+    const { findByText } = await render(<OfflineScanner onScan={async () => undefined} />);
+    expect(await findByText('Camera permission denied')).toBeTruthy();
   });
 });
