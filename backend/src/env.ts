@@ -7,6 +7,7 @@ const privateKey = z.string().regex(/^0x[a-fA-F0-9]{64}$/);
 
 const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   DB_PATH: z.string().min(1).default("./offline-pay.sqlite"),
   JWT_SECRET: z.string().min(32),
   CHAIN_MODE: z.enum(["fake", "chain"]).default("fake"),

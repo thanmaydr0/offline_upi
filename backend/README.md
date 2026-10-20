@@ -78,6 +78,20 @@ curl.exe -s -X POST "$base/v1/ledger/head" -H "Authorization: Bearer $token" `
 
 An observed counter decrease or a changed hash at the same counter freezes and revokes that device. This is a server-side rollback signal; it does not claim hardware-backed counter guarantees. The fake chain keeps collateral in memory, so restart it only for local demo use.
 
+## Render deployment (free demo)
+
+Create a Node web service from this repository's `main` branch. Leave Root Directory blank so npm can resolve the shared workspace.
+
+- Build command: `npm ci --include=dev --workspace backend --workspace shared`
+- Start command: `npm run start -w backend`
+- Health check: `/health`
+- Environment: import the ignored `backend/.env`, omit `PORT` so Render assigns it, and add `NODE_VERSION=24` and `TRUST_PROXY_HOPS=1`.
+- Keep `CHAIN_MODE=fake` and `FIAT_GATEWAY=mock` for the demo. These do not process real payments.
+
+The free instance has no persistent disk: SQLite records can disappear after a restart or deploy, and fake-chain collateral is always in memory. It also sleeps when idle. The laptop database is not migrated. On the phone, set the HTTPS service URL in Settings → Backend API URL, save it, then return to onboarding for the new server. Existing laptop sessions and vouchers are not migrated.
+
+Keep credentials only in Render's environment settings and ignored local files. A durable deployment requires persistent storage and a durable chain implementation.
+
 ## Checks
 
 ```powershell

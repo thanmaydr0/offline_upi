@@ -18,6 +18,8 @@ import { ReconciliationJob } from './jobs/reconcile.js';
 export function createAppRuntime(options: AppOptions) {
   const context = createContext(options);
   const app = express();
+  // Render terminates HTTPS at its reverse proxy. Keep local deployments untrusted.
+  app.set("trust proxy", context.env.TRUST_PROXY_HOPS);
   app.disable("x-powered-by");
   app.use(helmet({ contentSecurityPolicy: { directives: {
     'upgrade-insecure-requests': context.env.FIAT_GATEWAY === 'mock' ? null : [],

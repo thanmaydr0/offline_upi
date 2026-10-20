@@ -15,6 +15,7 @@ export const TEST_ISSUER_ADDRESS = privateKeyToAccount(TEST_ISSUER_KEY).address;
 export const TEST_WEBHOOK_SECRET = "test-webhook-secret-value";
 
 export const testEnv: BackendEnv = {
+  TRUST_PROXY_HOPS: 0,
   PORT: 3000,
   DB_PATH: ":memory:",
   JWT_SECRET: "test-jwt-secret-that-is-at-least-32-characters-long",
